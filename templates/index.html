@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CAN Tuning Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <section class="connection-panel" aria-label="COM port connection">
+        <label for="portSelect">COM Port</label>
+        <div class="connection-controls">
+          <select id="portSelect"></select>
+          <button id="refreshBtn" class="icon-button" type="button" title="Refresh ports">Refresh</button>
+          <button id="connectBtn" class="primary-button" type="button">Connect</button>
+          <button id="disconnectBtn" class="ghost-button" type="button">Disconnect</button>
+        </div>
+      </section>
+
+      <section class="status-panel" aria-live="polite">
+        <div class="status-heading">
+          <span id="operationName">Idle</span>
+          <span id="stateBadge" class="state-badge idle">Idle</span>
+        </div>
+        <div class="status-track">
+          <span id="statusFill"></span>
+        </div>
+        <p id="statusMessage">Select a COM port and connect.</p>
+      </section>
+
+      <section class="system-panel">
+        <span class="app-title">CAN Tuner</span>
+        <span id="connectionState" class="connection-state disconnected">Disconnected</span>
+      </section>
+    </header>
+
+    <section class="table-wrap" aria-label="Tuning parameters">
+      <div class="parameter-table">
+        {% for row in range(1, 12) %}
+          <div class="parameter-row">
+            {% for col in range(1, 5) %}
+              {% set item = parameters[((row - 1) * 4) + (col - 1)] %}
+              <label class="parameter-field" data-row="{{ row }}" data-col="{{ col }}">
+                <span>{{ item.name }}</span>
+                <input
+                  id="cell-{{ item.key }}"
+                  data-row="{{ row }}"
+                  data-col="{{ col }}"
+                  data-name="{{ item.name }}"
+                  inputmode="decimal"
+                  autocomplete="off"
+                >
+              </label>
+            {% endfor %}
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <footer class="actionbar">
+      <div class="selection-pill">
+        <span>Selected</span>
+        <strong id="selectedCell">None</strong>
+      </div>
+      <div class="action-buttons">
+        <button id="readBtn" class="primary-button" type="button">Read</button>
+        <button id="writeBtn" class="primary-button" type="button">Write</button>
+        <button id="zeroBtn" class="zero-button" type="button">Zero Angle</button>
+        <button id="importBtn" class="utility-button" type="button">Import</button>
+        <button id="exportBtn" class="utility-button" type="button">Export</button>
+        <button id="screenshotBtn" class="utility-button" type="button">Screenshot</button>
+        <input id="importFile" type="file" accept=".xlsx" hidden>
+      </div>
+    </footer>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

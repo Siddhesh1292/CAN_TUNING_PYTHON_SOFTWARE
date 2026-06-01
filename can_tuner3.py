@@ -13,6 +13,7 @@ CAN_ID_READ_REQ = 0xE0
 CAN_ID_READ_RESP = 0xE1
 READ_COMMAND = 0x00
 WRITE_COMMAND = 0x01
+WRITE_COMPLETE_COMMAND = 0x02
 FRAME_MARKER = 0xFF
 ZERO_ANGLE_ROW = 3
 
@@ -88,6 +89,11 @@ def send_read_request(adapter, row, col):
 def send_write_request(adapter, row, col, value):
     value_bytes = struct.pack("<f", value)
     data = bytes([WRITE_COMMAND, 0xFF, row, col]) + value_bytes
+    adapter.send(CAN_ID_READ_REQ, data)
+
+
+def send_write_complete_request(adapter):
+    data = [WRITE_COMPLETE_COMMAND, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
     adapter.send(CAN_ID_READ_REQ, data)
 
 

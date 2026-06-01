@@ -21,6 +21,7 @@ from can_tuner3 import (
     read_matching_response,
     read_zero_angle_frame,
     send_read_request,
+    send_write_complete_request,
     send_write_request,
 )
 from waveshare_can import WaveshareCANA
@@ -612,6 +613,9 @@ def write_values():
                 total,
             )
             time.sleep(0.03)
+
+        with tuner.can_lock:
+            send_write_complete_request(adapter)
 
         if failed_items:
             failed_text = ", ".join(failed_items[:4])

@@ -13,6 +13,7 @@ from serial.tools import list_ports
 
 from can_tuner3 import (
     CAN_BITRATE,
+    CAN_ID_READ_RESP,
     PARAM_NAMES,
     READ_COMMAND,
     SERIAL_BAUDRATE,
@@ -24,11 +25,26 @@ from can_tuner3 import (
     send_write_complete_request,
     send_write_request,
 )
-from waveshare_can import WaveshareCANA
+from waveshare_can import CAN_BITRATE_CODES, WaveshareCANA
 
 
 app = Flask(__name__)
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+AUTO_DETECT_FRAME = [0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+AUTO_DETECT_BITRATES = [
+    CAN_BITRATE,
+    250_000,
+    125_000,
+    1_000_000,
+    800_000,
+    400_000,
+    200_000,
+    100_000,
+    50_000,
+    20_000,
+    10_000,
+    5_000,
+]
 
 
 DISPLAY_NAMES = {
@@ -278,6 +294,7 @@ def parse_tuning_xlsx(file_data: bytes) -> dict[str, float]:
 class TunerState:
     adapter: WaveshareCANA | None = None
     port: str | None = None
+    detected_can_bitrate: int | None = None
     values: dict[str, float] = field(default_factory=dict)
     highlight_events: list[dict] = field(default_factory=list)
     event_counter: int = 0
@@ -312,6 +329,7 @@ def serialize_status() -> dict:
         return {
             "connected": tuner.connected,
             "port": tuner.port,
+            "detected_can_bitrate": tuner.detected_can_bitrate,
             "zero_active": tuner.zero_active,
             "busy": tuner.busy,
             "operation": tuner.operation,
@@ -347,6 +365,65 @@ def update_cell_value(row: int, col: int, value: float, kind: str) -> None:
             }
         )
         tuner.highlight_events = tuner.highlight_events[-160:]
+
+
+def format_bitrate(bitrate: int | None) -> str:
+    if bitrate is None:
+        return "not detected"
+    if bitrate >= 1_000_000 and bitrate % 1_000_000 == 0:
+        return f"{bitrate // 1_000_000}M"
+    if bitrate >= 1_000:
+        return f"{bitrate // 1_000}k"
+    return str(bitrate)
+
+
+def is_baud_detect_frame(can_id: int, data: list[int]) -> bool:
+    return can_id == CAN_ID_READ_RESP and data[:8] == AUTO_DETECT_FRAME
+
+
+def wait_for_baud_detect_frame(adapter: WaveshareCANA, timeout: float = 1.35) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        frame = adapter.receive(timeout=max(0.02, deadline - time.monotonic()))
+        if frame is None:
+            return False
+
+        can_id, data = frame
+        if is_baud_detect_frame(can_id, data):
+            return True
+
+    return False
+
+
+def detect_can_bitrate(port: str) -> tuple[WaveshareCANA, int]:
+    tried = set()
+    bitrates = []
+    for bitrate in AUTO_DETECT_BITRATES:
+        if bitrate in CAN_BITRATE_CODES and bitrate not in tried:
+            tried.add(bitrate)
+            bitrates.append(bitrate)
+
+    for bitrate in bitrates:
+        set_status("Connect", "running", f"Detecting CAN baud rate: {format_bitrate(bitrate)}...")
+        adapter = None
+        detected = False
+        try:
+            adapter = WaveshareCANA(port=port, baudrate=SERIAL_BAUDRATE, can_bitrate=bitrate)
+            detected = wait_for_baud_detect_frame(adapter)
+        except Exception:
+            if adapter is None:
+                raise
+        finally:
+            if adapter is not None and not detected:
+                try:
+                    adapter.close()
+                except Exception:
+                    pass
+        if adapter is not None and detected:
+            return adapter, bitrate
+
+    supported = ", ".join(format_bitrate(bitrate) for bitrate in bitrates)
+    raise RuntimeError(f"Could not detect CAN baud rate from heartbeat 0xE1. Tried: {supported}.")
 
 
 def read_all_job(initial_delay: float = 0.0) -> None:
@@ -472,15 +549,16 @@ def connect():
     if already_connected:
         return fail("Already connected. Disconnect before changing port.")
 
-    set_status("Connect", "running", f"Connecting to {port}...")
+    set_status("Connect", "running", f"Connecting to {port}. Detecting CAN baud rate...")
     try:
-        adapter = WaveshareCANA(port=port, baudrate=SERIAL_BAUDRATE, can_bitrate=CAN_BITRATE)
+        adapter, detected_bitrate = detect_can_bitrate(port)
     except Exception as exc:
         return fail(f"Connection failed: {exc}", 500)
 
     with tuner.lock:
         tuner.adapter = adapter
         tuner.port = port
+        tuner.detected_can_bitrate = detected_bitrate
         tuner.connected = True
         tuner.busy = True
         tuner.values.clear()
@@ -489,7 +567,7 @@ def connect():
     thread = threading.Thread(target=read_all_job, args=(0.8,), daemon=True)
     thread.start()
 
-    set_status("Read", "running", f"Connected on {port}. Reading parameters...", 0, 44)
+    set_status("Read", "running", f"Connected on {port} at {format_bitrate(detected_bitrate)}. Reading parameters...", 0, 44)
     return jsonify({"ok": True, "status": serialize_status()})
 
 
@@ -500,6 +578,7 @@ def disconnect():
         zero_event = tuner.zero_stop_event
         tuner.adapter = None
         tuner.port = None
+        tuner.detected_can_bitrate = None
         tuner.connected = False
         tuner.zero_active = False
         tuner.busy = False

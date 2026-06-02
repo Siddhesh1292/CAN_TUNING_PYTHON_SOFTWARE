@@ -237,6 +237,30 @@ button:disabled {
   color: var(--brand-dark);
 }
 
+.baud-box {
+  display: grid;
+  gap: 2px;
+  width: fit-content;
+  min-width: 116px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: var(--panel-soft);
+}
+
+.baud-box span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.baud-box strong {
+  color: var(--brand-dark);
+  font-size: 18px;
+  line-height: 1.1;
+}
+
 .connection-state {
   width: fit-content;
   border-radius: 999px;

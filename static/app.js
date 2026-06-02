@@ -15,6 +15,7 @@ const stateBadge = document.querySelector("#stateBadge");
 const statusFill = document.querySelector("#statusFill");
 const statusMessage = document.querySelector("#statusMessage");
 const connectionState = document.querySelector("#connectionState");
+const detectedBaud = document.querySelector("#detectedBaud");
 const inputs = [...document.querySelectorAll(".parameter-field input")];
 
 let selectedInput = null;
@@ -111,6 +112,9 @@ function updateStatus(status) {
     ? `Connected ${status.port || ""}`
     : "Disconnected";
   connectionState.className = `connection-state ${status.connected ? "connected" : "disconnected"}`;
+  detectedBaud.textContent = status.detected_can_bitrate
+    ? formatBitrate(status.detected_can_bitrate)
+    : "Not detected";
 
   connectBtn.disabled = status.connected;
   disconnectBtn.disabled = !status.connected;
@@ -123,6 +127,20 @@ function updateStatus(status) {
 
   applyValues(status.values);
   applyHighlightEvents(status.highlight_events);
+}
+
+function formatBitrate(value) {
+  const bitrate = Number(value);
+  if (!Number.isFinite(bitrate) || bitrate <= 0) {
+    return "Not detected";
+  }
+  if (bitrate >= 1000000 && bitrate % 1000000 === 0) {
+    return `${bitrate / 1000000}M`;
+  }
+  if (bitrate >= 1000) {
+    return `${bitrate / 1000}k`;
+  }
+  return `${bitrate}`;
 }
 
 async function refreshPorts() {

@@ -16,6 +16,7 @@ const statusFill = document.querySelector("#statusFill");
 const statusMessage = document.querySelector("#statusMessage");
 const connectionState = document.querySelector("#connectionState");
 const detectedBaud = document.querySelector("#detectedBaud");
+const picId = document.querySelector("#picId");
 const inputs = [...document.querySelectorAll(".parameter-field input")];
 
 let selectedInput = null;
@@ -115,6 +116,7 @@ function updateStatus(status) {
   detectedBaud.textContent = status.detected_can_bitrate
     ? formatBitrate(status.detected_can_bitrate)
     : "Not detected";
+  picId.textContent = status.pic_id || "Not read";
 
   connectBtn.disabled = status.connected;
   disconnectBtn.disabled = !status.connected;

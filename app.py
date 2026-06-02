@@ -31,6 +31,11 @@ from waveshare_can import CAN_BITRATE_CODES, WaveshareCANA
 app = Flask(__name__)
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 AUTO_DETECT_FRAME = [0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+PIC_ID_REQ_0 = 0xB0
+PIC_ID_RESP_0 = 0xB1
+PIC_ID_REQ_1 = 0xB2
+PIC_ID_RESP_1 = 0xB3
+PIC_ID_REQUEST_PAYLOADS = ([], [0x00] * 8)
 AUTO_DETECT_BITRATES = [
     CAN_BITRATE,
     250_000,
@@ -295,6 +300,7 @@ class TunerState:
     adapter: WaveshareCANA | None = None
     port: str | None = None
     detected_can_bitrate: int | None = None
+    pic_id: str | None = None
     values: dict[str, float] = field(default_factory=dict)
     highlight_events: list[dict] = field(default_factory=list)
     event_counter: int = 0
@@ -330,6 +336,7 @@ def serialize_status() -> dict:
             "connected": tuner.connected,
             "port": tuner.port,
             "detected_can_bitrate": tuner.detected_can_bitrate,
+            "pic_id": tuner.pic_id,
             "zero_active": tuner.zero_active,
             "busy": tuner.busy,
             "operation": tuner.operation,
@@ -395,6 +402,57 @@ def wait_for_baud_detect_frame(adapter: WaveshareCANA, timeout: float = 1.35) ->
     return False
 
 
+def read_exact_can_data(adapter: WaveshareCANA, expected_can_id: int, timeout: float = 1.5) -> list[int] | None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        frame = adapter.receive(timeout=max(0.02, deadline - time.monotonic()))
+        if frame is None:
+            return None
+
+        can_id, data = frame
+        if can_id == expected_can_id and len(data) >= 8:
+            return list(data[:8])
+
+    return None
+
+
+def clear_pending_can_frames(adapter: WaveshareCANA) -> None:
+    try:
+        adapter.ser.reset_input_buffer()
+    except Exception:
+        pass
+
+
+def request_pic_id_frame(adapter: WaveshareCANA, request_can_id: int, response_can_id: int) -> list[int] | None:
+    for payload in PIC_ID_REQUEST_PAYLOADS:
+        adapter.send(request_can_id, payload)
+        response = read_exact_can_data(adapter, response_can_id, timeout=2.0)
+        if response is not None:
+            return response
+        time.sleep(0.04)
+    return None
+
+
+def format_pic_id(raw_bytes: list[int]) -> str:
+    groups = []
+    for offset in range(0, len(raw_bytes), 4):
+        groups.append("".join(f"{value:02X}" for value in raw_bytes[offset:offset + 4]))
+    return "-".join(groups)
+
+
+def read_pic_id(adapter: WaveshareCANA) -> str:
+    clear_pending_can_frames(adapter)
+    first_half = request_pic_id_frame(adapter, PIC_ID_REQ_0, PIC_ID_RESP_0)
+    if first_half is None:
+        raise RuntimeError("No PIC ID response from 0xB1")
+
+    second_half = request_pic_id_frame(adapter, PIC_ID_REQ_1, PIC_ID_RESP_1)
+    if second_half is None:
+        raise RuntimeError("No PIC ID response from 0xB3")
+
+    return format_pic_id(first_half + second_half)
+
+
 def detect_can_bitrate(port: str) -> tuple[WaveshareCANA, int]:
     tried = set()
     bitrates = []
@@ -431,10 +489,22 @@ def read_all_job(initial_delay: float = 0.0) -> None:
         set_status("Read", "running", "Connected. Preparing automatic read...", 0, 44)
         time.sleep(initial_delay)
 
-    set_status("Read", "running", "Reading all parameters...", 0, 44)
     received = 0
 
     try:
+        adapter = require_adapter()
+        if adapter is None:
+            raise RuntimeError("CAN adapter disconnected")
+
+        set_status("Read", "running", "Reading PIC ID...", 0, 44)
+        with tuner.can_lock:
+            pic_id = read_pic_id(adapter)
+
+        with tuner.lock:
+            tuner.pic_id = pic_id
+
+        set_status("Read", "running", "Reading all parameters...", 0, 44)
+
         for row in range(1, 12):
             for col in range(1, 5):
                 adapter = require_adapter()
@@ -559,6 +629,7 @@ def connect():
         tuner.adapter = adapter
         tuner.port = port
         tuner.detected_can_bitrate = detected_bitrate
+        tuner.pic_id = None
         tuner.connected = True
         tuner.busy = True
         tuner.values.clear()
@@ -579,6 +650,7 @@ def disconnect():
         tuner.adapter = None
         tuner.port = None
         tuner.detected_can_bitrate = None
+        tuner.pic_id = None
         tuner.connected = False
         tuner.zero_active = False
         tuner.busy = False

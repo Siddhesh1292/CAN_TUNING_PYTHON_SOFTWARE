@@ -14,7 +14,6 @@ const operationName = document.querySelector("#operationName");
 const stateBadge = document.querySelector("#stateBadge");
 const statusFill = document.querySelector("#statusFill");
 const statusMessage = document.querySelector("#statusMessage");
-const connectionState = document.querySelector("#connectionState");
 const detectedBaud = document.querySelector("#detectedBaud");
 const picId = document.querySelector("#picId");
 const inputs = [...document.querySelectorAll(".parameter-field input")];
@@ -109,10 +108,6 @@ function updateStatus(status) {
   const percent = status.total ? Math.round((status.progress / status.total) * 100) : 0;
   statusFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
 
-  connectionState.textContent = status.connected
-    ? `Connected ${status.port || ""}`
-    : "Disconnected";
-  connectionState.className = `connection-state ${status.connected ? "connected" : "disconnected"}`;
   detectedBaud.textContent = status.detected_can_bitrate
     ? formatBitrate(status.detected_can_bitrate)
     : "Not detected";

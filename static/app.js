@@ -16,11 +16,18 @@ const statusFill = document.querySelector("#statusFill");
 const statusMessage = document.querySelector("#statusMessage");
 const detectedBaud = document.querySelector("#detectedBaud");
 const picId = document.querySelector("#picId");
+const projectId = document.querySelector("#projectId");
+const firmwareId = document.querySelector("#firmwareId");
 const inputs = [...document.querySelectorAll(".parameter-field input")];
+const systemIdInputs = {
+  project_id: projectId,
+  firmware_id: firmwareId,
+};
 
 let selectedInput = null;
 let lastHighlightEventId = 0;
 const dirtyCells = new Set();
+const dirtySystemIds = new Set();
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -56,6 +63,28 @@ function formatValue(value) {
   return numericValue.toFixed(2);
 }
 
+function formatSystemIdValue(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "";
+  }
+  const numericValue = Number(value);
+  if (Object.is(numericValue, -0) || Math.abs(numericValue) < 0.05) {
+    return "0.0";
+  }
+  return numericValue.toFixed(1);
+}
+
+function dirtyWriteCount() {
+  return dirtyCells.size + dirtySystemIds.size;
+}
+
+function refreshWriteButton(status = null) {
+  const count = dirtyWriteCount();
+  const unavailable = status ? !status.connected || status.busy : false;
+  writeBtn.disabled = unavailable || count === 0;
+  writeBtn.textContent = count > 0 ? `Write (${count})` : "Write";
+}
+
 function markUpdated(input, kind = "read") {
   const field = input.closest(".parameter-field");
   field.classList.remove("read-updated", "write-updated", "zero-updated", "dirty");
@@ -79,6 +108,19 @@ function applyValues(values) {
 
     const nextValue = formatValue(value);
     if (input.value !== nextValue && document.activeElement !== input) {
+      input.value = nextValue;
+    }
+  }
+}
+
+function applySystemIds(status) {
+  for (const [key, input] of Object.entries(systemIdInputs)) {
+    if (!input || dirtySystemIds.has(key) || document.activeElement === input) {
+      continue;
+    }
+
+    const nextValue = formatSystemIdValue(status[key]);
+    if (input.value !== nextValue) {
       input.value = nextValue;
     }
   }
@@ -112,12 +154,12 @@ function updateStatus(status) {
     ? formatBitrate(status.detected_can_bitrate)
     : "Not detected";
   picId.textContent = status.pic_id || "Not read";
+  applySystemIds(status);
 
   connectBtn.disabled = status.connected;
   disconnectBtn.disabled = !status.connected;
   readBtn.disabled = !status.connected || status.busy;
-  writeBtn.disabled = !status.connected || status.busy || dirtyCells.size === 0;
-  writeBtn.textContent = dirtyCells.size > 0 ? `Write (${dirtyCells.size})` : "Write";
+  refreshWriteButton(status);
   zeroBtn.disabled = !status.connected || (status.busy && !status.zero_active);
   zeroBtn.textContent = status.zero_active ? "Stop Zero" : "Zero Angle";
   zeroBtn.classList.toggle("active", Boolean(status.zero_active));
@@ -186,15 +228,29 @@ function setSelectedInput(input) {
   selectedInput = input;
   selectedInput.closest(".parameter-field").classList.add("selected");
   selectedCell.textContent = `Row ${input.dataset.row}, Col ${input.dataset.col} - ${input.dataset.name}`;
-  writeBtn.disabled = dirtyCells.size === 0;
+  refreshWriteButton();
 }
 
 function markDirty(input) {
   const key = input.id.replace("cell-", "");
   dirtyCells.add(key);
   input.closest(".parameter-field").classList.add("dirty");
-  writeBtn.textContent = `Write (${dirtyCells.size})`;
-  writeBtn.disabled = false;
+  refreshWriteButton();
+}
+
+function markSystemIdDirty(key) {
+  const input = systemIdInputs[key];
+  dirtySystemIds.add(key);
+  input.classList.add("dirty");
+  refreshWriteButton();
+}
+
+function clearWrittenSystemIds(systemIds) {
+  for (const key of Object.keys(systemIds)) {
+    const input = systemIdInputs[key];
+    dirtySystemIds.delete(key);
+    input?.classList.remove("dirty");
+  }
 }
 
 function getVisibleValues() {
@@ -261,8 +317,12 @@ writeBtn.addEventListener("click", async () => {
       value: input.value,
     };
   });
+  const systemIds = {};
+  for (const key of dirtySystemIds) {
+    systemIds[key] = formatSystemIdValue(systemIdInputs[key].value.trim());
+  }
 
-  if (!items.length) {
+  if (!items.length && !Object.keys(systemIds).length) {
     statusMessage.textContent = "Modify one or more values before writing.";
     return;
   }
@@ -270,8 +330,9 @@ writeBtn.addEventListener("click", async () => {
   try {
     const data = await api("/api/write", {
       method: "POST",
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({ items, system_ids: systemIds }),
     });
+    clearWrittenSystemIds(systemIds);
     updateStatus(data.status);
   } catch (error) {
     statusMessage.textContent = error.message;
@@ -393,6 +454,10 @@ for (const input of inputs) {
   input.addEventListener("focus", () => setSelectedInput(input));
   input.addEventListener("click", () => setSelectedInput(input));
   input.addEventListener("input", () => markDirty(input));
+}
+
+for (const [key, input] of Object.entries(systemIdInputs)) {
+  input.addEventListener("input", () => markSystemIdDirty(key));
 }
 
 refreshPorts();

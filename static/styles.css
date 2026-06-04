@@ -337,6 +337,54 @@ button:disabled {
   font-size: 12px;
 }
 
+.pic-id-box {
+  gap: 1px;
+  padding: 4px 8px;
+}
+
+.id-row {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.id-row span {
+  font-size: 9px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.id-row strong,
+.id-row input {
+  min-width: 0;
+  width: 100%;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.05;
+}
+
+.id-row input {
+  height: 15px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--brand-dark);
+  background: rgba(255, 255, 255, 0.72);
+  outline: none;
+}
+
+.id-row input:focus {
+  border-color: #2098d3;
+  background: #ffffff;
+}
+
+.id-row input.dirty {
+  border-color: #d68c16;
+  background: #fff7e8;
+}
+
 .table-wrap {
   overflow: auto;
   padding: 18px 24px 94px;

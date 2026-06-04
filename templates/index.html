@@ -36,9 +36,19 @@
             <span>CAN Baud</span>
             <strong id="detectedBaud">Not detected</strong>
           </div>
-          <div class="pic-id-box" aria-label="PIC ID">
-            <span>PIC ID</span>
-            <strong id="picId">Not read</strong>
+          <div class="pic-id-box" aria-label="Controller IDs">
+            <div class="id-row id-readonly">
+              <span>PIC ID</span>
+              <strong id="picId">Not read</strong>
+            </div>
+            <label class="id-row">
+              <span>Project ID</span>
+              <input id="projectId" type="text" inputmode="decimal" autocomplete="off" placeholder="Not read">
+            </label>
+            <label class="id-row">
+              <span>Firmware ID</span>
+              <input id="firmwareId" type="text" inputmode="decimal" autocomplete="off" placeholder="Not read">
+            </label>
           </div>
         </div>
       </section>

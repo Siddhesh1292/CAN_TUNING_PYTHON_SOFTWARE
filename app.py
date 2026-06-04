@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import struct
 import threading
 import time
 import zipfile
@@ -36,6 +37,10 @@ PIC_ID_RESP_0 = 0xB1
 PIC_ID_REQ_1 = 0xB2
 PIC_ID_RESP_1 = 0xB3
 PIC_ID_REQUEST_PAYLOADS = ([], [0x00] * 8)
+SYSTEM_ID_CAN_REQ = 0xE0
+SYSTEM_ID_CAN_RESP = 0xE1
+PROJECT_ID_SLOT = 0x01
+FIRMWARE_ID_SLOT = 0x02
 AUTO_DETECT_BITRATES = [
     CAN_BITRATE,
     250_000,
@@ -301,6 +306,8 @@ class TunerState:
     port: str | None = None
     detected_can_bitrate: int | None = None
     pic_id: str | None = None
+    project_id: float | None = None
+    firmware_id: float | None = None
     values: dict[str, float] = field(default_factory=dict)
     highlight_events: list[dict] = field(default_factory=list)
     event_counter: int = 0
@@ -337,6 +344,8 @@ def serialize_status() -> dict:
             "port": tuner.port,
             "detected_can_bitrate": tuner.detected_can_bitrate,
             "pic_id": tuner.pic_id,
+            "project_id": tuner.project_id,
+            "firmware_id": tuner.firmware_id,
             "zero_active": tuner.zero_active,
             "busy": tuner.busy,
             "operation": tuner.operation,
@@ -453,6 +462,44 @@ def read_pic_id(adapter: WaveshareCANA) -> str:
     return format_pic_id(first_half + second_half)
 
 
+def read_system_float_id(adapter: WaveshareCANA, slot: int) -> float:
+    adapter.send(SYSTEM_ID_CAN_REQ, [READ_COMMAND, 0xFF, 0x00, slot, 0x00, 0x00, 0x00, 0x00])
+    deadline = time.monotonic() + 1.5
+    while time.monotonic() < deadline:
+        frame = adapter.receive(timeout=max(0.02, deadline - time.monotonic()))
+        if frame is None:
+            break
+
+        can_id, data = frame
+        if can_id != SYSTEM_ID_CAN_RESP or len(data) < 8:
+            continue
+        if list(data[:4]) != [READ_COMMAND, 0xFF, 0x00, slot]:
+            continue
+        return struct.unpack("<f", bytes(data[4:8]))[0]
+
+    raise RuntimeError(f"No response for system ID 0x{slot:02X}")
+
+
+def write_system_float_id(adapter: WaveshareCANA, slot: int, value: float) -> float | None:
+    value_bytes = struct.pack("<f", value)
+    adapter.send(SYSTEM_ID_CAN_REQ, bytes([WRITE_COMMAND, 0xFF, 0x00, slot]) + value_bytes)
+
+    deadline = time.monotonic() + 1.5
+    while time.monotonic() < deadline:
+        frame = adapter.receive(timeout=max(0.02, deadline - time.monotonic()))
+        if frame is None:
+            return None
+
+        can_id, data = frame
+        if can_id != SYSTEM_ID_CAN_RESP or len(data) < 8:
+            continue
+        if list(data[:4]) != [WRITE_COMMAND, 0xFF, 0x00, slot]:
+            continue
+        return struct.unpack("<f", bytes(data[4:8]))[0]
+
+    return None
+
+
 def detect_can_bitrate(port: str) -> tuple[WaveshareCANA, int]:
     tried = set()
     bitrates = []
@@ -499,9 +546,13 @@ def read_all_job(initial_delay: float = 0.0) -> None:
         set_status("Read", "running", "Reading PIC ID...", 0, 44)
         with tuner.can_lock:
             pic_id = read_pic_id(adapter)
+            project_id = read_system_float_id(adapter, PROJECT_ID_SLOT)
+            firmware_id = read_system_float_id(adapter, FIRMWARE_ID_SLOT)
 
         with tuner.lock:
             tuner.pic_id = pic_id
+            tuner.project_id = project_id
+            tuner.firmware_id = firmware_id
 
         set_status("Read", "running", "Reading all parameters...", 0, 44)
 
@@ -630,6 +681,8 @@ def connect():
         tuner.port = port
         tuner.detected_can_bitrate = detected_bitrate
         tuner.pic_id = None
+        tuner.project_id = None
+        tuner.firmware_id = None
         tuner.connected = True
         tuner.busy = True
         tuner.values.clear()
@@ -651,6 +704,8 @@ def disconnect():
         tuner.port = None
         tuner.detected_can_bitrate = None
         tuner.pic_id = None
+        tuner.project_id = None
+        tuner.firmware_id = None
         tuner.connected = False
         tuner.zero_active = False
         tuner.busy = False
@@ -693,9 +748,14 @@ def write_values():
 
     raw_items = payload.get("items")
     if raw_items is None:
-        raw_items = [payload]
+        raw_items = [payload] if "row" in payload or "col" in payload else []
+    raw_system_ids = payload.get("system_ids") or {}
 
-    if not isinstance(raw_items, list) or not raw_items:
+    if not isinstance(raw_items, list):
+        return fail("Invalid write request.")
+    if not isinstance(raw_system_ids, dict):
+        return fail("Invalid system ID write request.")
+    if not raw_items and not raw_system_ids:
         return fail("Modify one or more values before writing.")
 
     items = []
@@ -712,6 +772,23 @@ def write_values():
 
         items.append({"row": row, "col": col, "value": value})
 
+    system_items = []
+    system_id_slots = {
+        "project_id": (PROJECT_ID_SLOT, "Project ID"),
+        "firmware_id": (FIRMWARE_ID_SLOT, "Firmware ID"),
+    }
+    for key, (slot, label) in system_id_slots.items():
+        if key not in raw_system_ids:
+            continue
+        try:
+            value = round(float(raw_system_ids.get(key)), 1)
+        except (TypeError, ValueError):
+            return fail(f"{label} must contain a numeric value.")
+        system_items.append({"key": key, "slot": slot, "label": label, "value": value})
+
+    if not items and not system_items:
+        return fail("Modify one or more values before writing.")
+
     with tuner.lock:
         connected = tuner.connected
         busy = tuner.busy
@@ -723,7 +800,7 @@ def write_values():
     if busy:
         return fail("Another operation is already running.")
 
-    total = len(items)
+    total = len(items) + len(system_items)
     set_status("Write", "running", f"Writing {total} value(s)...", 0, total)
     try:
         adapter = require_adapter()
@@ -732,13 +809,15 @@ def write_values():
 
         confirmed_count = 0
         failed_items = []
+        current_index = 0
 
-        for index, item in enumerate(items, start=1):
+        for item in items:
+            current_index += 1
             row = item["row"]
             col = item["col"]
             value = item["value"]
             name = DISPLAY_NAMES.get((row, col), PARAM_NAMES.get((row, col), "Unknown"))
-            set_status("Write", "running", f"Writing row {row}, col {col}: {name}", index - 1, total)
+            set_status("Write", "running", f"Writing row {row}, col {col}: {name}", current_index - 1, total)
 
             with tuner.can_lock:
                 send_write_request(adapter, row, col, value)
@@ -759,8 +838,35 @@ def write_values():
             set_status(
                 "Write",
                 "running",
-                f"Written {confirmed_count}/{index} value(s)",
-                index,
+                f"Written {confirmed_count}/{current_index} value(s)",
+                current_index,
+                total,
+            )
+            time.sleep(0.03)
+
+        for item in system_items:
+            current_index += 1
+            key = item["key"]
+            slot = item["slot"]
+            label = item["label"]
+            value = item["value"]
+            set_status("Write", "running", f"Writing {label}", current_index - 1, total)
+
+            with tuner.can_lock:
+                confirmed = write_system_float_id(adapter, slot, value)
+
+            if confirmed is None:
+                failed_items.append(label)
+            else:
+                with tuner.lock:
+                    setattr(tuner, key, confirmed)
+                confirmed_count += 1
+
+            set_status(
+                "Write",
+                "running",
+                f"Written {confirmed_count}/{current_index} value(s)",
+                current_index,
                 total,
             )
             time.sleep(0.03)

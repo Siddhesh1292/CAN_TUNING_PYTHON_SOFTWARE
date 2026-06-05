@@ -19,7 +19,7 @@ const picId = document.querySelector("#picId");
 const projectId = document.querySelector("#projectId");
 const firmwareId = document.querySelector("#firmwareId");
 const inputs = [...document.querySelectorAll(".parameter-field input")];
-const systemIdInputs = {
+const systemIdFields = {
   project_id: projectId,
   firmware_id: firmwareId,
 };
@@ -27,7 +27,6 @@ const systemIdInputs = {
 let selectedInput = null;
 let lastHighlightEventId = 0;
 const dirtyCells = new Set();
-const dirtySystemIds = new Set();
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -75,7 +74,7 @@ function formatSystemIdValue(value) {
 }
 
 function dirtyWriteCount() {
-  return dirtyCells.size + dirtySystemIds.size;
+  return dirtyCells.size;
 }
 
 function refreshWriteButton(status = null) {
@@ -114,15 +113,13 @@ function applyValues(values) {
 }
 
 function applySystemIds(status) {
-  for (const [key, input] of Object.entries(systemIdInputs)) {
-    if (!input || dirtySystemIds.has(key) || document.activeElement === input) {
+  for (const [key, field] of Object.entries(systemIdFields)) {
+    if (!field) {
       continue;
     }
 
     const nextValue = formatSystemIdValue(status[key]);
-    if (input.value !== nextValue) {
-      input.value = nextValue;
-    }
+    field.textContent = nextValue || "Not read";
   }
 }
 
@@ -238,21 +235,6 @@ function markDirty(input) {
   refreshWriteButton();
 }
 
-function markSystemIdDirty(key) {
-  const input = systemIdInputs[key];
-  dirtySystemIds.add(key);
-  input.classList.add("dirty");
-  refreshWriteButton();
-}
-
-function clearWrittenSystemIds(systemIds) {
-  for (const key of Object.keys(systemIds)) {
-    const input = systemIdInputs[key];
-    dirtySystemIds.delete(key);
-    input?.classList.remove("dirty");
-  }
-}
-
 function getVisibleValues() {
   const values = {};
   for (const input of inputs) {
@@ -317,12 +299,8 @@ writeBtn.addEventListener("click", async () => {
       value: input.value,
     };
   });
-  const systemIds = {};
-  for (const key of dirtySystemIds) {
-    systemIds[key] = formatSystemIdValue(systemIdInputs[key].value.trim());
-  }
 
-  if (!items.length && !Object.keys(systemIds).length) {
+  if (!items.length) {
     statusMessage.textContent = "Modify one or more values before writing.";
     return;
   }
@@ -330,9 +308,8 @@ writeBtn.addEventListener("click", async () => {
   try {
     const data = await api("/api/write", {
       method: "POST",
-      body: JSON.stringify({ items, system_ids: systemIds }),
+      body: JSON.stringify({ items }),
     });
-    clearWrittenSystemIds(systemIds);
     updateStatus(data.status);
   } catch (error) {
     statusMessage.textContent = error.message;
@@ -454,10 +431,6 @@ for (const input of inputs) {
   input.addEventListener("focus", () => setSelectedInput(input));
   input.addEventListener("click", () => setSelectedInput(input));
   input.addEventListener("input", () => markDirty(input));
-}
-
-for (const [key, input] of Object.entries(systemIdInputs)) {
-  input.addEventListener("input", () => markSystemIdDirty(key));
 }
 
 refreshPorts();

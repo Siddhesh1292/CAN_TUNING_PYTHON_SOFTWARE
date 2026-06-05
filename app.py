@@ -32,11 +32,10 @@ from waveshare_can import CAN_BITRATE_CODES, WaveshareCANA
 app = Flask(__name__)
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 AUTO_DETECT_FRAME = [0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-PIC_ID_REQ_0 = 0xB0
-PIC_ID_RESP_0 = 0xB1
-PIC_ID_REQ_1 = 0xB2
-PIC_ID_RESP_1 = 0xB3
-PIC_ID_REQUEST_PAYLOADS = ([], [0x00] * 8)
+PIC_ID_CAN_REQ = 0xE0
+PIC_ID_CAN_RESP = 0xE1
+PIC_ID_1_REQUEST_PAYLOAD = [0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+PIC_ID_2_REQUEST_PAYLOAD = [0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
 SYSTEM_ID_CAN_REQ = 0xE0
 SYSTEM_ID_CAN_RESP = 0xE1
 PROJECT_ID_SLOT = 0x01
@@ -432,14 +431,9 @@ def clear_pending_can_frames(adapter: WaveshareCANA) -> None:
         pass
 
 
-def request_pic_id_frame(adapter: WaveshareCANA, request_can_id: int, response_can_id: int) -> list[int] | None:
-    for payload in PIC_ID_REQUEST_PAYLOADS:
-        adapter.send(request_can_id, payload)
-        response = read_exact_can_data(adapter, response_can_id, timeout=2.0)
-        if response is not None:
-            return response
-        time.sleep(0.04)
-    return None
+def request_pic_id_frame(adapter: WaveshareCANA, payload: list[int]) -> list[int] | None:
+    adapter.send(PIC_ID_CAN_REQ, payload)
+    return read_exact_can_data(adapter, PIC_ID_CAN_RESP, timeout=2.0)
 
 
 def format_pic_id(raw_bytes: list[int]) -> str:
@@ -451,13 +445,13 @@ def format_pic_id(raw_bytes: list[int]) -> str:
 
 def read_pic_id(adapter: WaveshareCANA) -> str:
     clear_pending_can_frames(adapter)
-    first_half = request_pic_id_frame(adapter, PIC_ID_REQ_0, PIC_ID_RESP_0)
+    first_half = request_pic_id_frame(adapter, PIC_ID_1_REQUEST_PAYLOAD)
     if first_half is None:
-        raise RuntimeError("No PIC ID response from 0xB1")
+        raise RuntimeError("No PIC ID response from 0xE1 for request 0x04")
 
-    second_half = request_pic_id_frame(adapter, PIC_ID_REQ_1, PIC_ID_RESP_1)
+    second_half = request_pic_id_frame(adapter, PIC_ID_2_REQUEST_PAYLOAD)
     if second_half is None:
-        raise RuntimeError("No PIC ID response from 0xB3")
+        raise RuntimeError("No PIC ID response from 0xE1 for request 0x05")
 
     return format_pic_id(first_half + second_half)
 

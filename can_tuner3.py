@@ -62,7 +62,15 @@ PARAM_NAMES = {
     (11, 2): "M mode battery current",
     (11, 3): "L mode phase current",
     (11, 4): "M mode phase current",
+    (12, 1): "Braking current(A)",
+    (12, 2): "Braking time(Sec)",
+    (12, 3): "Generation voltage margin(V)",
+    (12, 4): "NA",
 }
+
+PARAM_ROW_COUNT = 12
+PARAM_COL_COUNT = 4
+PARAM_TOTAL = PARAM_ROW_COUNT * PARAM_COL_COUNT
 
 
 def connect_bus():
@@ -161,8 +169,8 @@ def want_to_read(adapter):
 
     results = {}
 
-    for row in range(1, 12):
-        for col in range(1, 5):
+    for row in range(1, PARAM_ROW_COUNT + 1):
+        for col in range(1, PARAM_COL_COUNT + 1):
             name = PARAM_NAMES.get((row, col), "Unknown")
             print(f"Reading row:{row}, col:{col} {name}")
 
@@ -189,8 +197,8 @@ def want_to_write(adapter):
         print("bus is not connected")
         return
 
-    row = read_int("Enter row number (1-11): ", 1, 11)
-    col = read_int("Enter column number (1-4): ", 1, 4)
+    row = read_int(f"Enter row number (1-{PARAM_ROW_COUNT}): ", 1, PARAM_ROW_COUNT)
+    col = read_int(f"Enter column number (1-{PARAM_COL_COUNT}): ", 1, PARAM_COL_COUNT)
     name = PARAM_NAMES.get((row, col), "Unknown")
     value = read_float(f"Enter new value for {name}: ")
 
@@ -289,8 +297,8 @@ def print_summary(results):
     print("")
     print("PARAMETER SUMMARY")
     print("=" * 72)
-    for row in range(1, 12):
-        for col in range(1, 5):
+    for row in range(1, PARAM_ROW_COUNT + 1):
+        for col in range(1, PARAM_COL_COUNT + 1):
             name = PARAM_NAMES.get((row, col), "Unknown")
             value = results.get((row, col))
             if value is None:
@@ -298,7 +306,7 @@ def print_summary(results):
             else:
                 print(f"[{row:02d},{col}] {name:<35} {value:.2f}")
     print("=" * 72)
-    print(f"Total received: {len(results)}/44")
+    print(f"Total received: {len(results)}/{PARAM_TOTAL}")
 
 
 def main():

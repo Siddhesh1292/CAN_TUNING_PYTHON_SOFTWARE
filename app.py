@@ -40,6 +40,9 @@ SYSTEM_ID_CAN_REQ = 0xE0
 SYSTEM_ID_CAN_RESP = 0xE1
 PROJECT_ID_SLOT = 0x01
 FIRMWARE_ID_SLOT = 0x02
+PARAM_ROW_COUNT = 12
+PARAM_COL_COUNT = 4
+PARAM_TOTAL = PARAM_ROW_COUNT * PARAM_COL_COUNT
 AUTO_DETECT_BITRATES = [
     CAN_BITRATE,
     250_000,
@@ -101,6 +104,10 @@ DISPLAY_NAMES = {
     (11, 2): "M mode battery current (%)",
     (11, 3): "L mode phase current (%)",
     (11, 4): "M mode phase current (%)",
+    (12, 1): "Braking current(A)",
+    (12, 2): "Braking time(Sec)",
+    (12, 3): "Generation voltage margin(V)",
+    (12, 4): "NA",
 }
 
 
@@ -110,8 +117,8 @@ def key_for(row: int, col: int) -> str:
 
 def build_parameters() -> list[dict]:
     parameters = []
-    for row in range(1, 12):
-        for col in range(1, 5):
+    for row in range(1, PARAM_ROW_COUNT + 1):
+        for col in range(1, PARAM_COL_COUNT + 1):
             parameters.append(
                 {
                     "row": row,
@@ -286,12 +293,12 @@ def parse_tuning_xlsx(file_data: bytes) -> dict[str, float]:
             except (IndexError, ValueError):
                 continue
 
-            if 1 <= row <= 11 and 1 <= col <= 4:
+            if 1 <= row <= PARAM_ROW_COUNT and 1 <= col <= PARAM_COL_COUNT:
                 parsed[key_for(row, col)] = value
         return parsed
 
-    for row_number, row_values in enumerate(table_rows[:11], start=1):
-        for col_number, raw_value in enumerate(row_values[:4], start=1):
+    for row_number, row_values in enumerate(table_rows[:PARAM_ROW_COUNT], start=1):
+        for col_number, raw_value in enumerate(row_values[:PARAM_COL_COUNT], start=1):
             try:
                 parsed[key_for(row_number, col_number)] = float(raw_value)
             except ValueError:
@@ -527,7 +534,7 @@ def detect_can_bitrate(port: str) -> tuple[WaveshareCANA, int]:
 
 def read_all_job(initial_delay: float = 0.0) -> None:
     if initial_delay > 0:
-        set_status("Read", "running", "Connected. Preparing automatic read...", 0, 44)
+        set_status("Read", "running", "Connected. Preparing automatic read...", 0, PARAM_TOTAL)
         time.sleep(initial_delay)
 
     received = 0
@@ -537,7 +544,7 @@ def read_all_job(initial_delay: float = 0.0) -> None:
         if adapter is None:
             raise RuntimeError("CAN adapter disconnected")
 
-        set_status("Read", "running", "Reading PIC ID...", 0, 44)
+        set_status("Read", "running", "Reading PIC ID...", 0, PARAM_TOTAL)
         with tuner.can_lock:
             pic_id = read_pic_id(adapter)
             project_id = read_system_float_id(adapter, PROJECT_ID_SLOT)
@@ -548,17 +555,17 @@ def read_all_job(initial_delay: float = 0.0) -> None:
             tuner.project_id = project_id
             tuner.firmware_id = firmware_id
 
-        set_status("Read", "running", "Reading all parameters...", 0, 44)
+        set_status("Read", "running", "Reading all parameters...", 0, PARAM_TOTAL)
 
-        for row in range(1, 12):
-            for col in range(1, 5):
+        for row in range(1, PARAM_ROW_COUNT + 1):
+            for col in range(1, PARAM_COL_COUNT + 1):
                 adapter = require_adapter()
                 if adapter is None:
                     raise RuntimeError("CAN adapter disconnected")
 
                 name = DISPLAY_NAMES.get((row, col), PARAM_NAMES.get((row, col), "Unknown"))
-                current = ((row - 1) * 4) + col
-                set_status("Read", "running", f"Reading row {row}, col {col}: {name}", current - 1, 44)
+                current = ((row - 1) * PARAM_COL_COUNT) + col
+                set_status("Read", "running", f"Reading row {row}, col {col}: {name}", current - 1, PARAM_TOTAL)
 
                 with tuner.can_lock:
                     send_read_request(adapter, row, col)
@@ -574,10 +581,10 @@ def read_all_job(initial_delay: float = 0.0) -> None:
                     update_cell_value(row, col, value, "read")
                     received += 1
 
-                set_status("Read", "running", f"Read {received}/{current} responses", current, 44)
+                set_status("Read", "running", f"Read {received}/{current} responses", current, PARAM_TOTAL)
                 time.sleep(0.03)
 
-        set_status("Read", "finished", f"Read finished. Received {received}/44 values.", 44, 44)
+        set_status("Read", "finished", f"Read finished. Received {received}/{PARAM_TOTAL} values.", PARAM_TOTAL, PARAM_TOTAL)
     except Exception as exc:
         set_status("Read", "failed", f"Read failed: {exc}")
     finally:
@@ -685,7 +692,7 @@ def connect():
     thread = threading.Thread(target=read_all_job, args=(0.8,), daemon=True)
     thread.start()
 
-    set_status("Read", "running", f"Connected on {port} at {format_bitrate(detected_bitrate)}. Reading parameters...", 0, 44)
+    set_status("Read", "running", f"Connected on {port} at {format_bitrate(detected_bitrate)}. Reading parameters...", 0, PARAM_TOTAL)
     return jsonify({"ok": True, "status": serialize_status()})
 
 
@@ -761,7 +768,7 @@ def write_values():
         except (AttributeError, TypeError, ValueError):
             return fail("Every modified cell must contain a numeric value.")
 
-        if not 1 <= row <= 11 or not 1 <= col <= 4:
+        if not 1 <= row <= PARAM_ROW_COUNT or not 1 <= col <= PARAM_COL_COUNT:
             return fail("Invalid row or column.")
 
         items.append({"row": row, "col": col, "value": value})
@@ -915,8 +922,8 @@ def export_tuning():
     values = payload.get("values") or {}
     items = []
 
-    for row in range(1, 12):
-        for col in range(1, 5):
+    for row in range(1, PARAM_ROW_COUNT + 1):
+        for col in range(1, PARAM_COL_COUNT + 1):
             raw_value = values.get(key_for(row, col), "")
             try:
                 value = float(raw_value) if raw_value != "" else ""

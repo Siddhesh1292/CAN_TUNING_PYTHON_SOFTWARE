@@ -56,11 +56,11 @@
 
     <section class="table-wrap" aria-label="Tuning parameters">
       <div class="parameter-table">
-        {% for row in range(1, 13) %}
+        {% for row in range(1, 16) %}
           <div class="parameter-row">
             {% for col in range(1, 5) %}
               {% set item = parameters[((row - 1) * 4) + (col - 1)] %}
-              <label class="parameter-field" data-row="{{ row }}" data-col="{{ col }}">
+              <label class="parameter-field{% if not item.writable %} parameter-readonly{% endif %}" data-row="{{ row }}" data-col="{{ col }}">
                 <span>{{ item.name }}</span>
                 <input
                   id="cell-{{ item.key }}"
@@ -69,6 +69,7 @@
                   data-name="{{ item.name }}"
                   inputmode="decimal"
                   autocomplete="off"
+                  {% if not item.writable %}readonly aria-readonly="true"{% endif %}
                 >
               </label>
             {% endfor %}

@@ -66,9 +66,22 @@ PARAM_NAMES = {
     (12, 2): "Braking time(Sec)",
     (12, 3): "Generation voltage margin(V)",
     (12, 4): "NA",
+    (13, 1): "Max IPhase(A)",
+    (13, 2): "Max frequency(Hz)",
+    (13, 3): "Max motor temp(degC)",
+    (13, 4): "Max ESC temperature(degC)",
+    (14, 1): "Max voltage(V)",
+    (14, 2): "Min voltage(V)",
+    (14, 3): "Max battery current(A)",
+    (14, 4): "NA",
+    (15, 1): "Min kp",
+    (15, 2): "Max kp",
+    (15, 3): "Min Ki",
+    (15, 4): "Max Ki",
 }
 
-PARAM_ROW_COUNT = 12
+PARAM_ROW_COUNT = 15
+PARAM_EDITABLE_ROW_COUNT = 12
 PARAM_COL_COUNT = 4
 PARAM_TOTAL = PARAM_ROW_COUNT * PARAM_COL_COUNT
 
@@ -197,7 +210,7 @@ def want_to_write(adapter):
         print("bus is not connected")
         return
 
-    row = read_int(f"Enter row number (1-{PARAM_ROW_COUNT}): ", 1, PARAM_ROW_COUNT)
+    row = read_int(f"Enter row number (1-{PARAM_EDITABLE_ROW_COUNT}): ", 1, PARAM_EDITABLE_ROW_COUNT)
     col = read_int(f"Enter column number (1-{PARAM_COL_COUNT}): ", 1, PARAM_COL_COUNT)
     name = PARAM_NAMES.get((row, col), "Unknown")
     value = read_float(f"Enter new value for {name}: ")

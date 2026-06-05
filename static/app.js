@@ -19,6 +19,7 @@ const picId = document.querySelector("#picId");
 const projectId = document.querySelector("#projectId");
 const firmwareId = document.querySelector("#firmwareId");
 const inputs = [...document.querySelectorAll(".parameter-field input")];
+const writableInputs = inputs.filter((input) => !input.readOnly);
 const systemIdFields = {
   project_id: projectId,
   firmware_id: firmwareId,
@@ -252,6 +253,9 @@ function applyImportedValues(values) {
     }
 
     input.value = formatValue(value);
+    if (input.readOnly) {
+      continue;
+    }
     markDirty(input);
     count += 1;
   }
@@ -430,6 +434,9 @@ screenshotBtn.addEventListener("click", async () => {
 for (const input of inputs) {
   input.addEventListener("focus", () => setSelectedInput(input));
   input.addEventListener("click", () => setSelectedInput(input));
+}
+
+for (const input of writableInputs) {
   input.addEventListener("input", () => markDirty(input));
 }
 

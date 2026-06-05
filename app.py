@@ -40,7 +40,8 @@ SYSTEM_ID_CAN_REQ = 0xE0
 SYSTEM_ID_CAN_RESP = 0xE1
 PROJECT_ID_SLOT = 0x01
 FIRMWARE_ID_SLOT = 0x02
-PARAM_ROW_COUNT = 12
+PARAM_ROW_COUNT = 15
+PARAM_EDITABLE_ROW_COUNT = 12
 PARAM_COL_COUNT = 4
 PARAM_TOTAL = PARAM_ROW_COUNT * PARAM_COL_COUNT
 AUTO_DETECT_BITRATES = [
@@ -108,6 +109,18 @@ DISPLAY_NAMES = {
     (12, 2): "Braking time(Sec)",
     (12, 3): "Generation voltage margin(V)",
     (12, 4): "NA",
+    (13, 1): "Max IPhase(A)",
+    (13, 2): "Max frequency(Hz)",
+    (13, 3): "Max motor temp(degC)",
+    (13, 4): "Max ESC temperature(degC)",
+    (14, 1): "Max voltage(V)",
+    (14, 2): "Min voltage(V)",
+    (14, 3): "Max battery current(A)",
+    (14, 4): "NA",
+    (15, 1): "Min kp",
+    (15, 2): "Max kp",
+    (15, 3): "Min Ki",
+    (15, 4): "Max Ki",
 }
 
 
@@ -125,6 +138,7 @@ def build_parameters() -> list[dict]:
                     "col": col,
                     "key": key_for(row, col),
                     "name": DISPLAY_NAMES.get((row, col), PARAM_NAMES.get((row, col), "Unknown")),
+                    "writable": row <= PARAM_EDITABLE_ROW_COUNT,
                 }
             )
     return parameters
@@ -293,11 +307,11 @@ def parse_tuning_xlsx(file_data: bytes) -> dict[str, float]:
             except (IndexError, ValueError):
                 continue
 
-            if 1 <= row <= PARAM_ROW_COUNT and 1 <= col <= PARAM_COL_COUNT:
+            if 1 <= row <= PARAM_EDITABLE_ROW_COUNT and 1 <= col <= PARAM_COL_COUNT:
                 parsed[key_for(row, col)] = value
         return parsed
 
-    for row_number, row_values in enumerate(table_rows[:PARAM_ROW_COUNT], start=1):
+    for row_number, row_values in enumerate(table_rows[:PARAM_EDITABLE_ROW_COUNT], start=1):
         for col_number, raw_value in enumerate(row_values[:PARAM_COL_COUNT], start=1):
             try:
                 parsed[key_for(row_number, col_number)] = float(raw_value)
@@ -768,7 +782,7 @@ def write_values():
         except (AttributeError, TypeError, ValueError):
             return fail("Every modified cell must contain a numeric value.")
 
-        if not 1 <= row <= PARAM_ROW_COUNT or not 1 <= col <= PARAM_COL_COUNT:
+        if not 1 <= row <= PARAM_EDITABLE_ROW_COUNT or not 1 <= col <= PARAM_COL_COUNT:
             return fail("Invalid row or column.")
 
         items.append({"row": row, "col": col, "value": value})

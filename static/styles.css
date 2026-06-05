@@ -437,6 +437,13 @@ button:disabled {
   font-weight: 800;
 }
 
+.parameter-field.parameter-readonly input {
+  border-color: var(--line-strong);
+  background: linear-gradient(180deg, #f5f8f9 0%, #e7eef0 100%);
+  color: #526970;
+  cursor: default;
+}
+
 .parameter-field.read-updated input {
   background: linear-gradient(180deg, #dff6ff 0%, #c8efff 100%);
   border-color: #2298d1;

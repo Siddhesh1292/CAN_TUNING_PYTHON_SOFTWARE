@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from xml.etree import ElementTree
 
+import serial
 from flask import Flask, Response, jsonify, render_template, request
 from serial.tools import list_ports
 
@@ -44,6 +45,11 @@ PARAM_ROW_COUNT = 15
 PARAM_EDITABLE_ROW_COUNT = 12
 PARAM_COL_COUNT = 4
 PARAM_TOTAL = PARAM_ROW_COUNT * PARAM_COL_COUNT
+UART_BAUDRATE = 9_600
+UART_PIC_ID_REQUEST = bytes([0x20, 0x01, 0x2F])
+UART_PIC_ID_START = 0x20
+UART_PIC_ID_STOP = 0x2F
+UART_PIC_ID_DATA_LENGTH = 16
 AUTO_DETECT_BITRATES = [
     CAN_BITRATE,
     250_000,
@@ -322,8 +328,9 @@ def parse_tuning_xlsx(file_data: bytes) -> dict[str, float]:
 
 @dataclass
 class TunerState:
-    adapter: WaveshareCANA | None = None
+    adapter: WaveshareCANA | serial.Serial | None = None
     port: str | None = None
+    communication_mode: str | None = None
     detected_can_bitrate: int | None = None
     pic_id: str | None = None
     project_id: float | None = None
@@ -362,6 +369,7 @@ def serialize_status() -> dict:
         return {
             "connected": tuner.connected,
             "port": tuner.port,
+            "communication_mode": tuner.communication_mode,
             "detected_can_bitrate": tuner.detected_can_bitrate,
             "pic_id": tuner.pic_id,
             "project_id": tuner.project_id,
@@ -378,8 +386,15 @@ def serialize_status() -> dict:
         }
 
 
-def require_adapter() -> WaveshareCANA | None:
+def require_adapter() -> WaveshareCANA | serial.Serial | None:
     with tuner.lock:
+        return tuner.adapter
+
+
+def require_can_adapter() -> WaveshareCANA | None:
+    with tuner.lock:
+        if tuner.communication_mode != "can" or not isinstance(tuner.adapter, WaveshareCANA):
+            return None
         return tuner.adapter
 
 
@@ -462,6 +477,43 @@ def format_pic_id(raw_bytes: list[int]) -> str:
     for offset in range(0, len(raw_bytes), 4):
         groups.append("".join(f"{value:02X}" for value in raw_bytes[offset:offset + 4]))
     return "-".join(groups)
+
+
+def read_uart_bytes(ser: serial.Serial, count: int, deadline: float) -> bytes | None:
+    data = bytearray()
+    while len(data) < count and time.monotonic() < deadline:
+        chunk = ser.read(count - len(data))
+        if chunk:
+            data.extend(chunk)
+    if len(data) == count:
+        return bytes(data)
+    return None
+
+
+def read_uart_pic_id(ser: serial.Serial, timeout: float = 2.0) -> str:
+    try:
+        ser.reset_input_buffer()
+    except Exception:
+        pass
+
+    ser.write(UART_PIC_ID_REQUEST)
+    ser.flush()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        start = ser.read(1)
+        if not start:
+            continue
+        if start[0] != UART_PIC_ID_START:
+            continue
+
+        payload_and_stop = read_uart_bytes(ser, UART_PIC_ID_DATA_LENGTH + 1, deadline)
+        if payload_and_stop is None:
+            break
+        if payload_and_stop[-1] != UART_PIC_ID_STOP:
+            continue
+        return format_pic_id(list(payload_and_stop[:UART_PIC_ID_DATA_LENGTH]))
+
+    raise RuntimeError("No UART PIC ID response")
 
 
 def read_pic_id(adapter: WaveshareCANA) -> str:
@@ -554,7 +606,7 @@ def read_all_job(initial_delay: float = 0.0) -> None:
     received = 0
 
     try:
-        adapter = require_adapter()
+        adapter = require_can_adapter()
         if adapter is None:
             raise RuntimeError("CAN adapter disconnected")
 
@@ -573,7 +625,7 @@ def read_all_job(initial_delay: float = 0.0) -> None:
 
         for row in range(1, PARAM_ROW_COUNT + 1):
             for col in range(1, PARAM_COL_COUNT + 1):
-                adapter = require_adapter()
+                adapter = require_can_adapter()
                 if adapter is None:
                     raise RuntimeError("CAN adapter disconnected")
 
@@ -611,7 +663,7 @@ def zero_angle_job(stop_event: threading.Event) -> None:
 
     try:
         while not stop_event.is_set():
-            adapter = require_adapter()
+            adapter = require_can_adapter()
             if adapter is None:
                 raise RuntimeError("CAN adapter disconnected")
 
@@ -677,13 +729,46 @@ def status():
 def connect():
     payload = request.get_json(silent=True) or {}
     port = payload.get("port")
+    mode = str(payload.get("mode") or "uart").strip().lower()
     if not port:
         return fail("Select a COM port first.")
+    if mode not in {"uart", "can"}:
+        return fail("Select UART or CAN mode.")
 
     with tuner.lock:
         already_connected = tuner.connected
     if already_connected:
         return fail("Already connected. Disconnect before changing port.")
+
+    if mode == "uart":
+        set_status("Connect", "running", f"Connecting to {port} at UART {UART_BAUDRATE}. Reading PIC ID...")
+        ser = None
+        try:
+            ser = serial.Serial(port, UART_BAUDRATE, timeout=0.02)
+            pic_id = read_uart_pic_id(ser)
+        except Exception as exc:
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+            return fail(f"UART connection failed: {exc}", 500)
+
+        with tuner.lock:
+            tuner.adapter = ser
+            tuner.port = port
+            tuner.communication_mode = "uart"
+            tuner.detected_can_bitrate = None
+            tuner.pic_id = pic_id
+            tuner.project_id = None
+            tuner.firmware_id = None
+            tuner.connected = True
+            tuner.busy = False
+            tuner.values.clear()
+            tuner.highlight_events.clear()
+
+        set_status("Connect", "finished", f"Connected on {port} at UART {UART_BAUDRATE}. PIC ID read.")
+        return jsonify({"ok": True, "status": serialize_status()})
 
     set_status("Connect", "running", f"Connecting to {port}. Detecting CAN baud rate...")
     try:
@@ -694,6 +779,7 @@ def connect():
     with tuner.lock:
         tuner.adapter = adapter
         tuner.port = port
+        tuner.communication_mode = "can"
         tuner.detected_can_bitrate = detected_bitrate
         tuner.pic_id = None
         tuner.project_id = None
@@ -717,6 +803,7 @@ def disconnect():
         zero_event = tuner.zero_stop_event
         tuner.adapter = None
         tuner.port = None
+        tuner.communication_mode = None
         tuner.detected_can_bitrate = None
         tuner.pic_id = None
         tuner.project_id = None
@@ -744,11 +831,16 @@ def read_all():
     with tuner.lock:
         connected = tuner.connected
         busy = tuner.busy
+        mode = tuner.communication_mode
         if connected and not busy:
             tuner.busy = True
 
     if not connected:
         return fail("Connect to a COM port first.")
+    if mode != "can":
+        with tuner.lock:
+            tuner.busy = False
+        return fail("Read is available in CAN mode only for now.")
     if busy:
         return fail("Another operation is already running.")
 
@@ -807,18 +899,23 @@ def write_values():
     with tuner.lock:
         connected = tuner.connected
         busy = tuner.busy
+        mode = tuner.communication_mode
         if connected and not busy:
             tuner.busy = True
 
     if not connected:
         return fail("Connect to a COM port first.")
+    if mode != "can":
+        with tuner.lock:
+            tuner.busy = False
+        return fail("Write is available in CAN mode only for now.")
     if busy:
         return fail("Another operation is already running.")
 
     total = len(items) + len(system_items)
     set_status("Write", "running", f"Writing {total} value(s)...", 0, total)
     try:
-        adapter = require_adapter()
+        adapter = require_can_adapter()
         if adapter is None:
             raise RuntimeError("CAN adapter disconnected")
 
@@ -957,6 +1054,7 @@ def zero_angle_toggle():
     with tuner.lock:
         connected = tuner.connected
         busy = tuner.busy
+        mode = tuner.communication_mode
         zero_active = tuner.zero_active
         zero_stop_event = tuner.zero_stop_event
 
@@ -966,7 +1064,7 @@ def zero_angle_toggle():
         else:
             stop_requested = False
 
-        if not stop_requested and connected and not busy:
+        if not stop_requested and connected and mode == "can" and not busy:
             stop_event = threading.Event()
             tuner.zero_stop_event = stop_event
             tuner.zero_active = True
@@ -978,6 +1076,8 @@ def zero_angle_toggle():
         return jsonify({"ok": True, "status": serialize_status()})
     if not connected:
         return fail("Connect to a COM port first.")
+    if mode != "can":
+        return fail("Zero Angle is available in CAN mode only for now.")
     if busy:
         return fail("Another operation is already running.")
 

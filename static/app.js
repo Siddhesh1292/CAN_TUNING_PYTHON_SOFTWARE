@@ -1,5 +1,7 @@
 const portSelect = document.querySelector("#portSelect");
 const refreshBtn = document.querySelector("#refreshBtn");
+const uartModeBtn = document.querySelector("#uartModeBtn");
+const canModeBtn = document.querySelector("#canModeBtn");
 const connectBtn = document.querySelector("#connectBtn");
 const disconnectBtn = document.querySelector("#disconnectBtn");
 const readBtn = document.querySelector("#readBtn");
@@ -28,6 +30,7 @@ const systemIdFields = {
 let selectedInput = null;
 let lastHighlightEventId = 0;
 const dirtyCells = new Set();
+let communicationMode = "uart";
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -80,9 +83,17 @@ function dirtyWriteCount() {
 
 function refreshWriteButton(status = null) {
   const count = dirtyWriteCount();
-  const unavailable = status ? !status.connected || status.busy : false;
+  const unavailable = status ? !status.connected || status.busy || status.communication_mode !== "can" : false;
   writeBtn.disabled = unavailable || count === 0;
   writeBtn.textContent = count > 0 ? `Write (${count})` : "Write";
+}
+
+function setCommunicationMode(mode) {
+  communicationMode = mode === "can" ? "can" : "uart";
+  uartModeBtn.classList.toggle("active", communicationMode === "uart");
+  canModeBtn.classList.toggle("active", communicationMode === "can");
+  uartModeBtn.setAttribute("aria-pressed", String(communicationMode === "uart"));
+  canModeBtn.setAttribute("aria-pressed", String(communicationMode === "can"));
 }
 
 function markUpdated(input, kind = "read") {
@@ -148,7 +159,9 @@ function updateStatus(status) {
   const percent = status.total ? Math.round((status.progress / status.total) * 100) : 0;
   statusFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
 
-  detectedBaud.textContent = status.detected_can_bitrate
+  detectedBaud.textContent = status.communication_mode === "uart"
+    ? "UART 9600"
+    : status.detected_can_bitrate
     ? formatBitrate(status.detected_can_bitrate)
     : "Not detected";
   picId.textContent = status.pic_id || "Not read";
@@ -156,9 +169,12 @@ function updateStatus(status) {
 
   connectBtn.disabled = status.connected;
   disconnectBtn.disabled = !status.connected;
-  readBtn.disabled = !status.connected || status.busy;
+  uartModeBtn.disabled = status.connected;
+  canModeBtn.disabled = status.connected;
+  const canReady = status.connected && status.communication_mode === "can";
+  readBtn.disabled = !canReady || status.busy;
   refreshWriteButton(status);
-  zeroBtn.disabled = !status.connected || (status.busy && !status.zero_active);
+  zeroBtn.disabled = !canReady || (status.busy && !status.zero_active);
   zeroBtn.textContent = status.zero_active ? "Stop Zero" : "Zero Angle";
   zeroBtn.classList.toggle("active", Boolean(status.zero_active));
 
@@ -263,12 +279,14 @@ function applyImportedValues(values) {
 }
 
 refreshBtn.addEventListener("click", refreshPorts);
+uartModeBtn.addEventListener("click", () => setCommunicationMode("uart"));
+canModeBtn.addEventListener("click", () => setCommunicationMode("can"));
 
 connectBtn.addEventListener("click", async () => {
   try {
     const data = await api("/api/connect", {
       method: "POST",
-      body: JSON.stringify({ port: portSelect.value }),
+      body: JSON.stringify({ port: portSelect.value, mode: communicationMode }),
     });
     updateStatus(data.status);
   } catch (error) {
@@ -441,5 +459,6 @@ for (const input of writableInputs) {
 }
 
 refreshPorts();
+setCommunicationMode("uart");
 pollStatus();
 window.setInterval(pollStatus, 500);

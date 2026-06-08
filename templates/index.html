@@ -10,7 +10,13 @@
   <main class="app-shell">
     <header class="topbar">
       <section class="connection-panel" aria-label="COM port connection">
-        <label for="portSelect">COM Port</label>
+        <div class="connection-heading">
+          <label for="portSelect">COM Port</label>
+          <div class="mode-toggle" role="group" aria-label="Communication mode">
+            <button id="uartModeBtn" class="active" type="button" data-mode="uart">UART</button>
+            <button id="canModeBtn" type="button" data-mode="can">CAN</button>
+          </div>
+        </div>
         <div class="connection-controls">
           <select id="portSelect"></select>
           <button id="refreshBtn" class="icon-button" type="button" title="Refresh ports">Refresh</button>

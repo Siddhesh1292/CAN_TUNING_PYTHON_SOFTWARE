@@ -84,14 +84,53 @@ input {
   padding: 8px 11px;
 }
 
+.connection-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
 .connection-panel label {
   display: block;
-  margin-bottom: 6px;
   color: var(--muted);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.mode-toggle {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(54px, 1fr));
+  gap: 2px;
+  min-width: 116px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #dfeaec;
+}
+
+.mode-toggle button {
+  min-height: 24px;
+  border-radius: 7px;
+  padding: 0 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 950;
+  box-shadow: none;
+}
+
+.mode-toggle button:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+
+.mode-toggle button.active {
+  background: linear-gradient(180deg, #2f6c69 0%, var(--brand) 100%);
+  color: #fff;
 }
 
 .connection-controls {

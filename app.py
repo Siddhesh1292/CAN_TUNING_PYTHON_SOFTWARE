@@ -50,6 +50,9 @@ UART_PIC_ID_REQUEST = bytes([0x20, 0x01, 0x2F])
 UART_PIC_ID_START = 0x20
 UART_PIC_ID_STOP = 0x2F
 UART_PIC_ID_DATA_LENGTH = 16
+UART_SYSTEM_ID_REQUEST = bytes([0xFF, 0x00])
+UART_SYSTEM_ID_MARKER = bytes([0xFF, 0x00])
+UART_SYSTEM_ID_RESPONSE_LENGTH = 20
 AUTO_DETECT_BITRATES = [
     CAN_BITRATE,
     250_000,
@@ -516,6 +519,39 @@ def read_uart_pic_id(ser: serial.Serial, timeout: float = 2.0) -> str:
     raise RuntimeError("No UART PIC ID response")
 
 
+def read_uart_system_ids(ser: serial.Serial, timeout: float = 2.0) -> tuple[float, float]:
+    try:
+        ser.reset_input_buffer()
+    except Exception:
+        pass
+
+    ser.write(UART_SYSTEM_ID_REQUEST)
+    ser.flush()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        first = ser.read(1)
+        if not first:
+            continue
+        if first[0] != UART_SYSTEM_ID_MARKER[0]:
+            continue
+
+        rest = read_uart_bytes(ser, UART_SYSTEM_ID_RESPONSE_LENGTH - 1, deadline)
+        if rest is None:
+            break
+
+        response = first + rest
+        if not response.startswith(UART_SYSTEM_ID_MARKER):
+            continue
+        if not response.endswith(UART_SYSTEM_ID_MARKER):
+            continue
+
+        project_id = struct.unpack("<f", response[2:6])[0]
+        firmware_id = struct.unpack("<f", response[6:10])[0]
+        return project_id, firmware_id
+
+    raise RuntimeError("No UART Project/Firmware ID response")
+
+
 def read_pic_id(adapter: WaveshareCANA) -> str:
     clear_pending_can_frames(adapter)
     first_half = request_pic_id_frame(adapter, PIC_ID_1_REQUEST_PAYLOAD)
@@ -741,11 +777,12 @@ def connect():
         return fail("Already connected. Disconnect before changing port.")
 
     if mode == "uart":
-        set_status("Connect", "running", f"Connecting to {port} at UART {UART_BAUDRATE}. Reading PIC ID...")
+        set_status("Connect", "running", f"Connecting to {port} at UART {UART_BAUDRATE}. Reading IDs...")
         ser = None
         try:
             ser = serial.Serial(port, UART_BAUDRATE, timeout=0.02)
             pic_id = read_uart_pic_id(ser)
+            project_id, firmware_id = read_uart_system_ids(ser)
         except Exception as exc:
             if ser is not None:
                 try:
@@ -760,14 +797,14 @@ def connect():
             tuner.communication_mode = "uart"
             tuner.detected_can_bitrate = None
             tuner.pic_id = pic_id
-            tuner.project_id = None
-            tuner.firmware_id = None
+            tuner.project_id = project_id
+            tuner.firmware_id = firmware_id
             tuner.connected = True
             tuner.busy = False
             tuner.values.clear()
             tuner.highlight_events.clear()
 
-        set_status("Connect", "finished", f"Connected on {port} at UART {UART_BAUDRATE}. PIC ID read.")
+        set_status("Connect", "finished", f"Connected on {port} at UART {UART_BAUDRATE}. IDs read.")
         return jsonify({"ok": True, "status": serialize_status()})
 
     set_status("Connect", "running", f"Connecting to {port}. Detecting CAN baud rate...")

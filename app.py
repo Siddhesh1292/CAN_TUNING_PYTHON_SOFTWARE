@@ -552,6 +552,57 @@ def read_uart_system_ids(ser: serial.Serial, timeout: float = 2.0) -> tuple[floa
     raise RuntimeError("No UART Project/Firmware ID response")
 
 
+UART_ROW_START_MARKER = 0xFF
+UART_ROW_RESPONSE_LENGTH = 20
+
+
+def read_uart_row(ser: serial.Serial, row: int, timeout: float = 2.0) -> list[float]:
+    if not 1 <= row <= PARAM_ROW_COUNT:
+        raise ValueError("Row number out of range")
+
+    try:
+        ser.reset_input_buffer()
+    except Exception:
+        pass
+
+    request = bytes([UART_ROW_START_MARKER, row])
+    ser.write(request)
+    ser.flush()
+
+    deadline = time.monotonic() + timeout
+    response = read_uart_bytes(ser, UART_ROW_RESPONSE_LENGTH, deadline)
+    if response is None:
+        raise RuntimeError(f"No response for UART row {row}")
+
+    if len(response) != UART_ROW_RESPONSE_LENGTH:
+        raise RuntimeError(f"Unexpected UART row {row} response length: {len(response)}")
+    if response[0] != UART_ROW_START_MARKER or response[1] != row:
+        raise RuntimeError(f"Invalid UART row {row} response header")
+    if response[-2] != UART_ROW_START_MARKER or response[-1] != row:
+        raise RuntimeError(f"Invalid UART row {row} response footer")
+
+    payload = response[2:-2]
+    return list(struct.unpack("<ffff", payload))
+
+
+UART_ROW_READ_DELAY = 0.03
+
+
+def read_uart_rows(ser: serial.Serial) -> None:
+    for row in range(1, PARAM_ROW_COUNT + 1):
+        row_name = DISPLAY_NAMES.get((row, 1), f"Row {row}")
+        try:
+            set_status("Connect", "running", f"Reading UART row {row}: {row_name}...", row - 1, PARAM_ROW_COUNT)
+            row_values = read_uart_row(ser, row)
+        except Exception as exc:
+            set_status("Connect", "running", f"UART row {row} read failed: {exc}", row - 1, PARAM_ROW_COUNT)
+            continue
+
+        for col, value in enumerate(row_values, start=1):
+            update_cell_value(row, col, value, "read")
+        time.sleep(UART_ROW_READ_DELAY)
+
+
 def read_pic_id(adapter: WaveshareCANA) -> str:
     clear_pending_can_frames(adapter)
     first_half = request_pic_id_frame(adapter, PIC_ID_1_REQUEST_PAYLOAD)
@@ -777,12 +828,16 @@ def connect():
         return fail("Already connected. Disconnect before changing port.")
 
     if mode == "uart":
-        set_status("Connect", "running", f"Connecting to {port} at UART {UART_BAUDRATE}. Reading IDs...")
+        set_status("Connect", "running", f"Connecting to {port} at UART {UART_BAUDRATE}. Reading IDs..." )
         ser = None
         try:
             ser = serial.Serial(port, UART_BAUDRATE, timeout=0.02)
             pic_id = read_uart_pic_id(ser)
             project_id, firmware_id = read_uart_system_ids(ser)
+            with tuner.lock:
+                tuner.values.clear()
+                tuner.highlight_events.clear()
+            read_uart_rows(ser)
         except Exception as exc:
             if ser is not None:
                 try:
@@ -801,10 +856,8 @@ def connect():
             tuner.firmware_id = firmware_id
             tuner.connected = True
             tuner.busy = False
-            tuner.values.clear()
-            tuner.highlight_events.clear()
 
-        set_status("Connect", "finished", f"Connected on {port} at UART {UART_BAUDRATE}. IDs read.")
+        set_status("Connect", "finished", f"Connected on {port} at UART {UART_BAUDRATE}. IDs and rows read.")
         return jsonify({"ok": True, "status": serialize_status()})
 
     set_status("Connect", "running", f"Connecting to {port}. Detecting CAN baud rate...")

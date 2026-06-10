@@ -30,7 +30,25 @@ const systemIdFields = {
 let selectedInput = null;
 let lastHighlightEventId = 0;
 const dirtyCells = new Set();
+const originalValues = new Map();
 let communicationMode = "uart";
+
+function valuesAreEquivalent(valueA, valueB) {
+  const a = String(valueA).trim();
+  const b = String(valueB).trim();
+
+  if (a === "" && b === "") {
+    return true;
+  }
+
+  const aNumber = Number(a);
+  const bNumber = Number(b);
+  if (a !== "" && b !== "" && !Number.isNaN(aNumber) && !Number.isNaN(bNumber)) {
+    return Object.is(aNumber, bNumber);
+  }
+
+  return a === b;
+}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -121,6 +139,7 @@ function applyValues(values) {
     if (input.value !== nextValue && document.activeElement !== input) {
       input.value = nextValue;
     }
+    originalValues.set(key, nextValue);
   }
 }
 
@@ -248,8 +267,16 @@ function setSelectedInput(input) {
 
 function markDirty(input) {
   const key = input.id.replace("cell-", "");
-  dirtyCells.add(key);
-  input.closest(".parameter-field").classList.add("dirty");
+  const baseline = originalValues.get(key) ?? "";
+
+  if (valuesAreEquivalent(input.value, baseline)) {
+    dirtyCells.delete(key);
+    input.closest(".parameter-field").classList.remove("dirty");
+  } else {
+    dirtyCells.add(key);
+    input.closest(".parameter-field").classList.add("dirty");
+  }
+
   refreshWriteButton();
 }
 

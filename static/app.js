@@ -12,6 +12,11 @@ const exportBtn = document.querySelector("#exportBtn");
 const screenshotBtn = document.querySelector("#screenshotBtn");
 const importFile = document.querySelector("#importFile");
 const selectedCell = document.querySelector("#selectedCell");
+const connectionHint = document.querySelector("#connectionHint");
+const connectionHintImage = document.querySelector("#connectionHintImage");
+const connectionHintTitle = document.querySelector("#connectionHintTitle");
+const connectionHintCopy = document.querySelector("#connectionHintCopy");
+const hintCancelBtn = document.querySelector("#hintCancelBtn");
 const operationName = document.querySelector("#operationName");
 const stateBadge = document.querySelector("#stateBadge");
 const statusFill = document.querySelector("#statusFill");
@@ -106,12 +111,50 @@ function refreshWriteButton(status = null) {
   writeBtn.textContent = count > 0 ? `Write (${count})` : "Write";
 }
 
-function setCommunicationMode(mode) {
+let modeHintTimeout = null;
+
+function hideConnectionHint() {
+  if (!connectionHint) {
+    return;
+  }
+  connectionHint.classList.add("hidden");
+  if (modeHintTimeout) {
+    window.clearTimeout(modeHintTimeout);
+    modeHintTimeout = null;
+  }
+}
+
+function showConnectionHint(mode) {
+  if (!connectionHint || !connectionHintImage || !connectionHintTitle || !connectionHintCopy) {
+    return;
+  }
+
+  const isUart = mode === "uart";
+  connectionHintImage.src = isUart ? "/static/usb-uart.jpg" : "/static/usb-can.jpg";
+  connectionHintImage.alt = isUart ? "USB-to-UART adapter" : "USB-to-CAN adapter";
+  connectionHintTitle.textContent = isUart ? "USB ↔ UART adapter" : "USB ↔ CAN adapter";
+  connectionHintCopy.textContent = isUart
+    ? "Connect the USB-to-UART adapter as shown before using UART mode."
+    : "Connect the USB-to-CAN adapter as shown before using CAN mode.";
+
+  connectionHint.classList.remove("hidden");
+
+  if (modeHintTimeout) {
+    window.clearTimeout(modeHintTimeout);
+  }
+  modeHintTimeout = window.setTimeout(hideConnectionHint, 3000);
+}
+
+function setCommunicationMode(mode, showHint = true) {
   communicationMode = mode === "can" ? "can" : "uart";
   uartModeBtn.classList.toggle("active", communicationMode === "uart");
   canModeBtn.classList.toggle("active", communicationMode === "can");
   uartModeBtn.setAttribute("aria-pressed", String(communicationMode === "uart"));
   canModeBtn.setAttribute("aria-pressed", String(communicationMode === "can"));
+
+  if (showHint) {
+    showConnectionHint(communicationMode);
+  }
 }
 
 function markUpdated(input, kind = "read") {
@@ -309,6 +352,7 @@ function applyImportedValues(values) {
 refreshBtn.addEventListener("click", refreshPorts);
 uartModeBtn.addEventListener("click", () => setCommunicationMode("uart"));
 canModeBtn.addEventListener("click", () => setCommunicationMode("can"));
+hintCancelBtn?.addEventListener("click", hideConnectionHint);
 
 connectBtn.addEventListener("click", async () => {
   try {
@@ -487,6 +531,6 @@ for (const input of writableInputs) {
 }
 
 refreshPorts();
-setCommunicationMode("uart");
+setCommunicationMode("uart", false);
 pollStatus();
 window.setInterval(pollStatus, 500);

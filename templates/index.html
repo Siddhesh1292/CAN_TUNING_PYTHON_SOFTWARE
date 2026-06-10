@@ -105,6 +105,15 @@
     </footer>
   </main>
 
+  <div id="connectionHint" class="connection-hint hidden" role="status" aria-live="polite">
+    <img id="connectionHintImage" src="" alt="Adapter instruction">
+    <div class="connection-hint-text">
+      <strong id="connectionHintTitle">Connection help</strong>
+      <p id="connectionHintCopy">Follow the adapter connection instructions before using the selected mode.</p>
+    </div>
+    <button id="hintCancelBtn" class="hint-cancel" type="button" aria-label="Close connection hint">×</button>
+  </div>
+
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

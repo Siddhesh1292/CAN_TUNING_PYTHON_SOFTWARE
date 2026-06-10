@@ -10,6 +10,10 @@
   <main class="app-shell">
     <header class="topbar">
       <section class="connection-panel" aria-label="COM port connection">
+        <div class="company-branding" aria-label="AproposDrive Technologies logo">
+          <img src="{{ url_for('static', filename='company_logo.jpeg') }}" alt="AproposDrive logo">
+          <strong>AproposDrive Technologies</strong>
+        </div>
         <div class="connection-heading">
           <label for="portSelect">COM Port</label>
           <div class="mode-toggle" role="group" aria-label="Communication mode">

@@ -406,19 +406,21 @@ def fail(message: str, status_code: int = 400):
     return jsonify({"ok": False, "error": message, "status": serialize_status()}), status_code
 
 
-def update_cell_value(row: int, col: int, value: float, kind: str) -> None:
+def update_cell_value(row: int, col: int, value: float, kind: str, highlight: bool = True) -> None:
     with tuner.lock:
         cell_key = key_for(row, col)
+        previous_value = tuner.values.get(cell_key)
         tuner.values[cell_key] = value
-        tuner.event_counter += 1
-        tuner.highlight_events.append(
-            {
-                "id": tuner.event_counter,
-                "key": cell_key,
-                "kind": kind,
-            }
-        )
-        tuner.highlight_events = tuner.highlight_events[-160:]
+        if highlight and previous_value != value:
+            tuner.event_counter += 1
+            tuner.highlight_events.append(
+                {
+                    "id": tuner.event_counter,
+                    "key": cell_key,
+                    "kind": kind,
+                }
+            )
+            tuner.highlight_events = tuner.highlight_events[-160:]
 
 
 def format_bitrate(bitrate: int | None) -> str:
@@ -554,6 +556,23 @@ def read_uart_system_ids(ser: serial.Serial, timeout: float = 2.0) -> tuple[floa
 
 UART_ROW_START_MARKER = 0xFF
 UART_ROW_RESPONSE_LENGTH = 20
+UART_ZERO_ANGLE_RESPONSE_LENGTH = 20
+
+
+def read_uart_zero_angle_row(ser: serial.Serial, timeout: float = 0.05) -> list[float] | None:
+    deadline = time.monotonic() + timeout
+    response = read_uart_bytes(ser, UART_ZERO_ANGLE_RESPONSE_LENGTH, deadline)
+    if response is None or len(response) != UART_ZERO_ANGLE_RESPONSE_LENGTH:
+        return None
+    if response[0] != UART_ROW_START_MARKER or response[1] != ZERO_ANGLE_ROW:
+        return None
+    if response[-2] != UART_ROW_START_MARKER or response[-1] != ZERO_ANGLE_ROW:
+        return None
+
+    return [
+        struct.unpack("<f", response[offset:offset + 4])[0]
+        for offset in range(2, 18, 4)
+    ]
 
 
 def read_uart_row(ser: serial.Serial, row: int, timeout: float = 2.0) -> list[float]:
@@ -601,6 +620,40 @@ def read_uart_rows(ser: serial.Serial) -> None:
         for col, value in enumerate(row_values, start=1):
             update_cell_value(row, col, value, "read")
         time.sleep(UART_ROW_READ_DELAY)
+
+
+def write_uart_row(ser: serial.Serial, row: int, values: list[float], timeout: float = 2.0) -> list[float]:
+    if len(values) != PARAM_COL_COUNT:
+        raise ValueError("Row write requires exactly 4 values.")
+
+    try:
+        ser.reset_input_buffer()
+    except Exception:
+        pass
+
+    payload = struct.pack("<ffff", *values)
+    frame = bytes([UART_ROW_START_MARKER, row]) + payload + bytes([UART_ROW_START_MARKER, row])
+    ser.write(frame)
+    ser.flush()
+
+    deadline = time.monotonic() + timeout
+    response = read_uart_bytes(ser, UART_ROW_RESPONSE_LENGTH, deadline)
+    if response is None:
+        raise RuntimeError(f"No response for UART row {row}")
+
+    if len(response) != UART_ROW_RESPONSE_LENGTH:
+        raise RuntimeError(f"Unexpected UART row {row} response length: {len(response)}")
+    if response[0] != UART_ROW_START_MARKER or response[1] != row:
+        raise RuntimeError(f"Invalid UART row {row} response header")
+    if response[-2] != UART_ROW_START_MARKER or response[-1] != row:
+        raise RuntimeError(f"Invalid UART row {row} response footer")
+
+    response_payload = response[2:-2]
+    returned_values = list(struct.unpack("<ffff", response_payload))
+    if returned_values != values:
+        raise RuntimeError(f"UART row {row} confirmation did not match written values")
+
+    return returned_values
 
 
 def read_pic_id(adapter: WaveshareCANA) -> str:
@@ -745,23 +798,90 @@ def read_all_job(initial_delay: float = 0.0) -> None:
             tuner.busy = False
 
 
+def read_all_job_uart(initial_delay: float = 0.0) -> None:
+    if initial_delay > 0:
+        set_status("Read", "running", "Preparing UART read...", 0, PARAM_TOTAL)
+        time.sleep(initial_delay)
+
+    received = 0
+
+    try:
+        adapter = require_adapter()
+        if adapter is None or not isinstance(adapter, serial.Serial):
+            raise RuntimeError("UART adapter disconnected")
+
+        set_status("Read", "running", "Reading UART rows...", 0, PARAM_TOTAL)
+        for row in range(1, PARAM_ROW_COUNT + 1):
+            with tuner.can_lock:
+                row_values = read_uart_row(adapter, row)
+
+            for col, value in enumerate(row_values, start=1):
+                update_cell_value(row, col, value, "read")
+                received += 1
+
+            set_status(
+                "Read",
+                "running",
+                f"Read row {row} of {PARAM_ROW_COUNT}",
+                row * PARAM_COL_COUNT,
+                PARAM_TOTAL,
+            )
+            time.sleep(0.03)
+
+        set_status("Read", "finished", f"Read finished. Received {received}/{PARAM_TOTAL} values.", PARAM_TOTAL, PARAM_TOTAL)
+    except Exception as exc:
+        set_status("Read", "failed", f"Read failed: {exc}")
+    finally:
+        with tuner.lock:
+            tuner.busy = False
+
+
 def zero_angle_job(stop_event: threading.Event) -> None:
     set_status("Zero Angle", "running", "Listening for row 3 updates from MCU.", 0, 0)
 
     try:
+        reset_buffer = True
         while not stop_event.is_set():
-            adapter = require_can_adapter()
+            with tuner.lock:
+                mode = tuner.communication_mode
+
+            if mode == "can":
+                adapter = require_can_adapter()
+            elif mode == "uart":
+                adapter = require_adapter()
+            else:
+                raise RuntimeError("Zero Angle is available in CAN or UART mode only.")
+
             if adapter is None:
-                raise RuntimeError("CAN adapter disconnected")
+                raise RuntimeError("Adapter disconnected")
 
-            with tuner.can_lock:
-                frame = read_zero_angle_frame(adapter, timeout=0.05)
+            if mode == "can":
+                with tuner.can_lock:
+                    frame = read_zero_angle_frame(adapter, timeout=0.05)
 
-            if frame is None:
-                continue
+                if frame is None:
+                    continue
 
-            col, value = frame
-            update_cell_value(ZERO_ANGLE_ROW, col, value, "zero")
+                col, value = frame
+                update_cell_value(ZERO_ANGLE_ROW, col, value, "zero")
+            else:
+                if not isinstance(adapter, serial.Serial):
+                    raise RuntimeError("UART adapter disconnected")
+                if reset_buffer:
+                    try:
+                        adapter.reset_input_buffer()
+                    except Exception:
+                        pass
+                    reset_buffer = False
+                with tuner.can_lock:
+                    row_values = read_uart_zero_angle_row(adapter, timeout=0.05)
+
+                if row_values is None:
+                    continue
+
+                for col, value in enumerate(row_values, start=1):
+                    update_cell_value(ZERO_ANGLE_ROW, col, value, "zero")
+
             with tuner.lock:
                 snapshot = {
                     key_for(ZERO_ANGLE_ROW, item_col): tuner.values.get(key_for(ZERO_ANGLE_ROW, item_col))
@@ -775,7 +895,7 @@ def zero_angle_job(stop_event: threading.Event) -> None:
                 if item_value is None:
                     message_values.append(f"{item_name}: no data")
                 else:
-                        message_values.append(f"{item_name}: {item_value:.2f}")
+                    message_values.append(f"{item_name}: {item_value:.2f}")
 
             set_status("Zero Angle", "running", " | ".join(message_values))
 
@@ -927,14 +1047,13 @@ def read_all():
 
     if not connected:
         return fail("Connect to a COM port first.")
-    if mode != "can":
-        with tuner.lock:
-            tuner.busy = False
-        return fail("Read is available in CAN mode only for now.")
     if busy:
         return fail("Another operation is already running.")
 
-    thread = threading.Thread(target=read_all_job, daemon=True)
+    if mode == "can":
+        thread = threading.Thread(target=read_all_job, daemon=True)
+    else:
+        thread = threading.Thread(target=read_all_job_uart, daemon=True)
     thread.start()
     return jsonify({"ok": True, "status": serialize_status()})
 
@@ -995,86 +1114,142 @@ def write_values():
 
     if not connected:
         return fail("Connect to a COM port first.")
-    if mode != "can":
+    if mode not in {"can", "uart"}:
         with tuner.lock:
             tuner.busy = False
-        return fail("Write is available in CAN mode only for now.")
+        return fail("Write is available in CAN or UART mode only for now.")
     if busy:
         return fail("Another operation is already running.")
 
-    total = len(items) + len(system_items)
+    if mode == "uart" and system_items:
+        with tuner.lock:
+            tuner.busy = False
+        return fail("UART write only supports row values.")
+
+    if mode == "uart":
+        row_groups: dict[int, dict[int, float]] = {}
+        with tuner.lock:
+            current_values = tuner.values.copy()
+        for item in items:
+            row_groups.setdefault(item["row"], {})[item["col"]] = item["value"]
+
+        rows = []
+        for row, cols in sorted(row_groups.items()):
+            row_values = []
+            for col in range(1, PARAM_COL_COUNT + 1):
+                key = key_for(row, col)
+                if col in cols:
+                    row_values.append(cols[col])
+                elif key in current_values:
+                    row_values.append(current_values[key])
+                else:
+                    return fail(f"Missing current value for row {row}, col {col}.")
+            rows.append((row, row_values))
+        total = len(rows)
+    else:
+        total = len(items) + len(system_items)
+
     set_status("Write", "running", f"Writing {total} value(s)...", 0, total)
     try:
-        adapter = require_can_adapter()
+        if mode == "uart":
+            adapter = require_adapter()
+        else:
+            adapter = require_can_adapter()
         if adapter is None:
-            raise RuntimeError("CAN adapter disconnected")
+            raise RuntimeError("Adapter disconnected")
 
         confirmed_count = 0
         failed_items = []
         current_index = 0
 
-        for item in items:
-            current_index += 1
-            row = item["row"]
-            col = item["col"]
-            value = item["value"]
-            name = DISPLAY_NAMES.get((row, col), PARAM_NAMES.get((row, col), "Unknown"))
-            set_status("Write", "running", f"Writing row {row}, col {col}: {name}", current_index - 1, total)
+        if mode == "uart":
+            for row, row_values in rows:
+                current_index += 1
+                name = DISPLAY_NAMES.get((row, 1), f"Row {row}")
+                set_status("Write", "running", f"Writing row {row}: {name}", current_index - 1, total)
 
-            with tuner.can_lock:
-                send_write_request(adapter, row, col, value)
-                confirmed = read_matching_response(
-                    adapter,
-                    row,
-                    col,
-                    command=WRITE_COMMAND,
-                    timeout=1.5,
+                with tuner.can_lock:
+                    confirmed_values = write_uart_row(adapter, row, row_values)
+
+                if confirmed_values is None:
+                    failed_items.append(f"row {row}")
+                else:
+                    for col, confirmed in enumerate(confirmed_values, start=1):
+                        update_cell_value(row, col, confirmed, "write", highlight=(col in cols))
+                    confirmed_count += 1
+
+                set_status(
+                    "Write",
+                    "running",
+                    f"Written {confirmed_count}/{current_index} rows",
+                    current_index,
+                    total,
                 )
+                time.sleep(0.03)
+        else:
+            for item in items:
+                current_index += 1
+                row = item["row"]
+                col = item["col"]
+                value = item["value"]
+                name = DISPLAY_NAMES.get((row, col), PARAM_NAMES.get((row, col), "Unknown"))
+                set_status("Write", "running", f"Writing row {row}, col {col}: {name}", current_index - 1, total)
 
-            if confirmed is None:
-                failed_items.append(f"row {row}, col {col}")
-            else:
-                update_cell_value(row, col, confirmed, "write")
-                confirmed_count += 1
+                with tuner.can_lock:
+                    send_write_request(adapter, row, col, value)
+                    confirmed = read_matching_response(
+                        adapter,
+                        row,
+                        col,
+                        command=WRITE_COMMAND,
+                        timeout=1.5,
+                    )
 
-            set_status(
-                "Write",
-                "running",
-                f"Written {confirmed_count}/{current_index} value(s)",
-                current_index,
-                total,
-            )
-            time.sleep(0.03)
+                if confirmed is None:
+                    failed_items.append(f"row {row}, col {col}")
+                else:
+                    update_cell_value(row, col, confirmed, "write")
+                    confirmed_count += 1
 
-        for item in system_items:
-            current_index += 1
-            key = item["key"]
-            slot = item["slot"]
-            label = item["label"]
-            value = item["value"]
-            set_status("Write", "running", f"Writing {label}", current_index - 1, total)
+                set_status(
+                    "Write",
+                    "running",
+                    f"Written {confirmed_count}/{current_index} value(s)",
+                    current_index,
+                    total,
+                )
+                time.sleep(0.03)
 
+            for item in system_items:
+                current_index += 1
+                key = item["key"]
+                slot = item["slot"]
+                label = item["label"]
+                value = item["value"]
+                set_status("Write", "running", f"Writing {label}", current_index - 1, total)
+
+                with tuner.can_lock:
+                    confirmed = write_system_float_id(adapter, slot, value)
+
+                if confirmed is None:
+                    failed_items.append(label)
+                else:
+                    with tuner.lock:
+                        setattr(tuner, key, confirmed)
+                    confirmed_count += 1
+
+                set_status(
+                    "Write",
+                    "running",
+                    f"Written {confirmed_count}/{current_index} value(s)",
+                    current_index,
+                    total,
+                )
+                time.sleep(0.03)
+
+        if mode == "can":
             with tuner.can_lock:
-                confirmed = write_system_float_id(adapter, slot, value)
-
-            if confirmed is None:
-                failed_items.append(label)
-            else:
-                with tuner.lock:
-                    setattr(tuner, key, confirmed)
-                confirmed_count += 1
-
-            set_status(
-                "Write",
-                "running",
-                f"Written {confirmed_count}/{current_index} value(s)",
-                current_index,
-                total,
-            )
-            time.sleep(0.03)
-
-        with tuner.can_lock:
-            send_write_complete_request(adapter)
+                send_write_complete_request(adapter)
 
         if failed_items:
             failed_text = ", ".join(failed_items[:4])
@@ -1154,7 +1329,7 @@ def zero_angle_toggle():
         else:
             stop_requested = False
 
-        if not stop_requested and connected and mode == "can" and not busy:
+        if not stop_requested and connected and mode in {"can", "uart"} and not busy:
             stop_event = threading.Event()
             tuner.zero_stop_event = stop_event
             tuner.zero_active = True
@@ -1166,8 +1341,8 @@ def zero_angle_toggle():
         return jsonify({"ok": True, "status": serialize_status()})
     if not connected:
         return fail("Connect to a COM port first.")
-    if mode != "can":
-        return fail("Zero Angle is available in CAN mode only for now.")
+    if mode not in {"can", "uart"}:
+        return fail("Zero Angle is available in CAN or UART mode only.")
     if busy:
         return fail("Another operation is already running.")
 

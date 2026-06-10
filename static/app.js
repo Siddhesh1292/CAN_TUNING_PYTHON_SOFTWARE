@@ -83,7 +83,7 @@ function dirtyWriteCount() {
 
 function refreshWriteButton(status = null) {
   const count = dirtyWriteCount();
-  const unavailable = status ? !status.connected || status.busy || status.communication_mode !== "can" : false;
+  const unavailable = status ? !status.connected || status.busy : false;
   writeBtn.disabled = unavailable || count === 0;
   writeBtn.textContent = count > 0 ? `Write (${count})` : "Write";
 }
@@ -171,10 +171,11 @@ function updateStatus(status) {
   disconnectBtn.disabled = !status.connected;
   uartModeBtn.disabled = status.connected;
   canModeBtn.disabled = status.connected;
-  const canReady = status.connected && status.communication_mode === "can";
-  readBtn.disabled = !canReady || status.busy;
+  const readReady = status.connected;
+  readBtn.disabled = !readReady || status.busy;
   refreshWriteButton(status);
-  zeroBtn.disabled = !canReady || (status.busy && !status.zero_active);
+  const zeroReady = status.connected && (status.communication_mode === "can" || status.communication_mode === "uart");
+  zeroBtn.disabled = !zeroReady || (status.busy && !status.zero_active);
   zeroBtn.textContent = status.zero_active ? "Stop Zero" : "Zero Angle";
   zeroBtn.classList.toggle("active", Boolean(status.zero_active));
 

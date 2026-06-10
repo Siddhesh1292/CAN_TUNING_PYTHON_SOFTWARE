@@ -68,6 +68,9 @@
       <div class="parameter-table">
         {% for row in range(1, 16) %}
           <div class="parameter-row">
+            <div class="row-identifier" aria-label="Row {{ row }} identifier">
+              FF{{ '%02X' % row }}
+            </div>
             {% for col in range(1, 5) %}
               {% set item = parameters[((row - 1) * 4) + (col - 1)] %}
               <label class="parameter-field{% if not item.writable %} parameter-readonly{% endif %}" data-row="{{ row }}" data-col="{{ col }}">

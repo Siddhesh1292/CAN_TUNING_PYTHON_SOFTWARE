@@ -533,8 +533,22 @@ button:disabled {
 
 .parameter-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: 84px repeat(4, minmax(0, 1fr));
   gap: 9px;
+}
+
+.row-identifier {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 45px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #f5f8f9 0%, #e7eef0 100%);
+  color: var(--brand-dark);
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  font-size: 0.86rem;
+  border: 1px solid rgba(148, 171, 176, 0.82);
 }
 
 .parameter-field {

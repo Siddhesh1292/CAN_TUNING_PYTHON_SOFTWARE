@@ -160,7 +160,7 @@ function updateStatus(status) {
   statusFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
 
   detectedBaud.textContent = status.communication_mode === "uart"
-    ? "UART 9600"
+    ? "9600"
     : status.detected_can_bitrate
     ? formatBitrate(status.detected_can_bitrate)
     : "Not detected";

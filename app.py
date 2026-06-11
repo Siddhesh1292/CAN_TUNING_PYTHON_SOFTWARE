@@ -161,32 +161,87 @@ def cell_ref(col_index: int, row_index: int) -> str:
     return f"{letters}{row_index}"
 
 
-def xlsx_cell(value, col_index: int, row_index: int) -> str:
+def xlsx_cell(value, col_index: int, row_index: int, style: int | None = None) -> str:
     ref = cell_ref(col_index, row_index)
+    style_attr = f' s="{style}"' if style is not None else ""
     if value is None or value == "":
-        return f'<c r="{ref}"/>'
+        return f'<c r="{ref}"{style_attr}/>'
     if isinstance(value, (int, float)):
-        return f'<c r="{ref}"><v>{value}</v></c>'
+        return f'<c r="{ref}"{style_attr}><v>{value}</v></c>'
     escaped = html.escape(str(value), quote=True)
-    return f'<c r="{ref}" t="inlineStr"><is><t>{escaped}</t></is></c>'
+    return f'<c r="{ref}" t="inlineStr"{style_attr}><is><t>{escaped}</t></is></c>'
+
+
+def build_styles_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<fonts count="2">'
+        '<font><sz val="11"/><color theme="1"/><name val="Calibri"/></font>'
+        '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>'
+        '</fonts>'
+        '<fills count="4">'
+        '<fill><patternFill patternType="none"/></fill>'
+        '<fill><patternFill patternType="gray125"/></fill>'
+        '<fill><patternFill patternType="solid"><fgColor rgb="FF4BACC6"/><bgColor indexed="64"/></patternFill></fill>'
+        '<fill><patternFill patternType="solid"><fgColor rgb="FFF2F2F2"/><bgColor indexed="64"/></patternFill></fill>'
+        '</fills>'
+        '<borders count="1">'
+        '<border>'
+        '<left style="thin"><color rgb="FFBFBFBF"/></left>'
+        '<right style="thin"><color rgb="FFBFBFBF"/></right>'
+        '<top style="thin"><color rgb="FFBFBFBF"/></top>'
+        '<bottom style="thin"><color rgb="FFBFBFBF"/></bottom>'
+        '<diagonal/>'
+        '</border>'
+        '</borders>'
+        '<cellStyleXfs count="1">'
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>'
+        '</cellStyleXfs>'
+        '<cellXfs count="4">'
+        '<xf xfId="0" numFmtId="0" fontId="0" fillId="0" borderId="0" applyFont="1" applyBorder="1"/>'
+        '<xf xfId="0" numFmtId="0" fontId="1" fillId="2" borderId="0" applyFont="1" applyFill="1" applyBorder="1"/>'
+        '<xf xfId="0" numFmtId="0" fontId="0" fillId="0" borderId="0" applyFont="1" applyBorder="1"/>'
+        '<xf xfId="0" numFmtId="0" fontId="0" fillId="3" borderId="0" applyFont="1" applyFill="1" applyBorder="1"/>'
+        '</cellXfs>'
+        '<cellStyles count="1">'
+        '<cellStyle name="Normal" xfId="0" builtinId="0"/>'
+        '</cellStyles>'
+        '</styleSheet>'
+    )
 
 
 def build_tuning_xlsx(items: list[dict]) -> bytes:
-    rows = [["Row", "Column", "Parameter", "Value"]]
-    for item in items:
-        rows.append(
-            [
-                item["row"],
-                item["col"],
-                DISPLAY_NAMES.get((item["row"], item["col"]), ""),
+    rows = [
+        [
+            "Row",
+            "Parameter 1",
+            "Value 1",
+            "Parameter 2",
+            "Value 2",
+            "Parameter 3",
+            "Value 3",
+            "Parameter 4",
+            "Value 4",
+        ]
+    ]
+
+    items_by_position = {key_for(item["row"], item["col"]): item for item in items}
+    for row in range(1, PARAM_ROW_COUNT + 1):
+        row_values = [f"FF{row:02X}"]
+        for col in range(1, PARAM_COL_COUNT + 1):
+            item = items_by_position.get(key_for(row, col), {})
+            row_values.extend([
+                DISPLAY_NAMES.get((row, col), ""),
                 item.get("value", ""),
-            ]
-        )
+            ])
+        rows.append(row_values)
 
     sheet_rows = []
     for row_index, row_values in enumerate(rows, start=1):
+        row_style = 1 if row_index == 1 else (3 if row_index % 2 == 0 else 2)
         cells = "".join(
-            xlsx_cell(value, col_index, row_index)
+            xlsx_cell(value, col_index, row_index, row_style)
             for col_index, value in enumerate(row_values, start=1)
         )
         sheet_rows.append(f'<row r="{row_index}">{cells}</row>')
@@ -194,6 +249,20 @@ def build_tuning_xlsx(items: list[dict]) -> bytes:
     sheet_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheetViews><sheetView workbookViewId="0">'
+        '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
+        '</sheetView></sheetViews>'
+        '<cols>'
+        '<col min="1" max="1" width="10" customWidth="1"/>'
+        '<col min="2" max="2" width="28" customWidth="1"/>'
+        '<col min="3" max="3" width="16" customWidth="1"/>'
+        '<col min="4" max="4" width="28" customWidth="1"/>'
+        '<col min="5" max="5" width="16" customWidth="1"/>'
+        '<col min="6" max="6" width="28" customWidth="1"/>'
+        '<col min="7" max="7" width="16" customWidth="1"/>'
+        '<col min="8" max="8" width="28" customWidth="1"/>'
+        '<col min="9" max="9" width="16" customWidth="1"/>'
+        '</cols>'
         '<sheetData>'
         f'{"".join(sheet_rows)}'
         '</sheetData>'
@@ -210,6 +279,7 @@ def build_tuning_xlsx(items: list[dict]) -> bytes:
             '<Default Extension="xml" ContentType="application/xml"/>'
             '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
             '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
             '</Types>',
         )
         archive.writestr(
@@ -232,8 +302,10 @@ def build_tuning_xlsx(items: list[dict]) -> bytes:
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
             '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+            '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
             '</Relationships>',
         )
+        archive.writestr("xl/styles.xml", build_styles_xml())
         archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
     return output.getvalue()
 
@@ -318,6 +390,32 @@ def parse_tuning_xlsx(file_data: bytes) -> dict[str, float]:
 
             if 1 <= row <= PARAM_EDITABLE_ROW_COUNT and 1 <= col <= PARAM_COL_COUNT:
                 parsed[key_for(row, col)] = value
+        return parsed
+
+    if header and header[0].strip().lower() == "row":
+        for row_values in table_rows[1:]:
+            if not row_values:
+                continue
+            row_label = str(row_values[0]).strip()
+            try:
+                if row_label.upper().startswith("FF"):
+                    row = int(row_label[2:], 16)
+                else:
+                    row = int(float(row_label))
+            except (ValueError, TypeError):
+                continue
+
+            for col in range(1, PARAM_COL_COUNT + 1):
+                value_column = 1 + (col - 1) * 2 + 1
+                if value_column >= len(row_values):
+                    continue
+                raw_value = row_values[value_column]
+                try:
+                    value = float(raw_value)
+                except (TypeError, ValueError):
+                    continue
+                if 1 <= row <= PARAM_EDITABLE_ROW_COUNT and 1 <= col <= PARAM_COL_COUNT:
+                    parsed[key_for(row, col)] = value
         return parsed
 
     for row_number, row_values in enumerate(table_rows[:PARAM_EDITABLE_ROW_COUNT], start=1):

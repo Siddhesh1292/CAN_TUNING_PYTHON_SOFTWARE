@@ -1,0 +1,18 @@
+# Terraform
+deployment/terraform/.terraform/
+deployment/terraform/.terraform.lock.hcl
+deployment/terraform/terraform.tfvars
+deployment/terraform/terraform.tfstate
+deployment/terraform/terraform.tfstate.backup
+deployment/terraform/tfplan
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+
+# Secrets
+*.pem
+*.key

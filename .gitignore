@@ -1,0 +1,36 @@
+# Terraform state (NEVER commit these)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# AWS credentials
+.aws/
+credentials
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Test output
+coverage.xml
+test-results.xml
+.coverage
+htmlcov/
+
+# Docker
+*.tar
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

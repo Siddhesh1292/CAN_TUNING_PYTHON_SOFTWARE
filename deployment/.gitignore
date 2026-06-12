@@ -1,18 +1,16 @@
-# Terraform
-deployment/terraform/.terraform/
-deployment/terraform/.terraform.lock.hcl
-deployment/terraform/terraform.tfvars
-deployment/terraform/terraform.tfstate
-deployment/terraform/terraform.tfstate.backup
-deployment/terraform/tfplan
-
-# Python
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+.pytest_cache/
+coverage.xml
+test-results.xml
+*.tar
+.venv/
 venv/
-.env
-
-# Secrets
-*.pem
-*.key
+.idea/
+.vscode/

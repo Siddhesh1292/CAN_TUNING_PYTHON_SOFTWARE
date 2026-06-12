@@ -1,58 +1,73 @@
+# ── Global variables ──────────────────────────────────────────────────────────
+
 variable "aws_region" {
   description = "AWS region"
   type        = string
-  default     = "ap-south-1"   # Mumbai — closest to Pune
+  default     = "us-east-2"   # Ohio
 }
 
 variable "environment" {
-  description = "Deployment environment (prod / staging)"
-  type        = string
-  default     = "prod"
+  type    = string
+  default = "prod"
 }
 
 variable "project_name" {
-  description = "Short name used to prefix all resource names"
-  type        = string
-  default     = "can-tuner"
+  type    = string
+  default = "can-tuner"
 }
 
 variable "domain_name" {
-  description = "Root domain managed in Route 53 (must already exist as a Hosted Zone)"
+  description = "Root domain managed in Route 53 (e.g. example.com)"
   type        = string
-  # e.g. "example.com"
 }
 
 variable "app_subdomain" {
-  description = "Subdomain for the app"
+  description = "Subdomain for the app (results in app_subdomain.domain_name)"
   type        = string
   default     = "tuner"
-  # Results in tuner.example.com
 }
 
-variable "instance_type" {
-  description = "EC2 instance type"
+variable "vpc_cidr" {
+  type    = string
+  default = "10.0.0.0/16"
+}
+
+# Single AZ — cheap
+variable "availability_zone" {
+  type    = string
+  default = "us-east-2a"
+}
+
+variable "ec2_key_pair_name" {
+  description = "Name of an existing EC2 Key Pair for SSH access"
   type        = string
-  default     = "t3.small"   # 2 vCPU, 2 GB RAM — plenty for Flask + Nginx
 }
 
-variable "key_pair_name" {
-  description = "Name of an existing EC2 key pair for SSH access"
+# t3.small = 2 vCPU / 2 GB RAM — works fine for both Jenkins and app
+variable "jenkins_instance_type" {
+  type    = string
+  default = "t3.small"
+}
+
+variable "app_instance_type" {
+  type    = string
+  default = "t3.small"
+}
+
+variable "app_port" {
+  type    = number
+  default = 5000
+}
+
+variable "certificate_arn" {
+  description = "ACM certificate ARN (us-east-2) for HTTPS on the ALB"
   type        = string
-  # Create one in EC2 Console → Key Pairs, then put the name here
-}
-
-variable "allowed_ssh_cidrs" {
-  description = "CIDR blocks allowed to SSH into the EC2 instance (restrict to your IP)"
-  type        = list(string)
-  default     = ["0.0.0.0/0"]   # Change to your IP, e.g. ["203.0.113.42/32"]
 }
 
 variable "tags" {
-  description = "Tags applied to all resources"
-  type        = map(string)
+  type = map(string)
   default = {
-    Project     = "CAN-Tuner"
-    ManagedBy   = "Terraform"
-    Environment = "prod"
+    Project   = "CAN-Tuner"
+    ManagedBy = "Terraform"
   }
 }

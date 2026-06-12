@@ -7,15 +7,6 @@ terraform {
       version = "~> 5.0"
     }
   }
-
-  # Remote state — create this S3 bucket manually before first apply
-  backend "s3" {
-    bucket         = "can-tuner-terraform-state"   # change to your bucket name
-    key            = "prod/terraform.tfstate"
-    region         = "ap-south-1"
-    encrypt        = true
-    dynamodb_table = "can-tuner-tf-lock"
-  }
 }
 
 provider "aws" {
@@ -26,44 +17,63 @@ provider "aws" {
   }
 }
 
-# ── EC2 instance (Flask + Nginx run here directly) ─────────────────────────────
-module "ec2" {
-  source = "./modules/ec2"
-
+# ── Networking ─────────────────────────────────────────────────────────────────
+module "vpc" {
+  source            = "./modules/vpc"
   project_name      = var.project_name
-  environment       = var.environment
-  aws_region        = var.aws_region
-  instance_type     = var.instance_type
-  key_pair_name     = var.key_pair_name
-  allowed_ssh_cidrs = var.allowed_ssh_cidrs
+  vpc_cidr          = var.vpc_cidr
+  availability_zone = var.availability_zone
 }
 
-# ── Route 53 + ACM certificate ─────────────────────────────────────────────────
-module "route53" {
-  source = "./modules/route53"
+# ── Security Groups ────────────────────────────────────────────────────────────
+module "sg" {
+  source       = "./modules/sg"
+  project_name = var.project_name
+  vpc_id       = module.vpc.vpc_id
+  app_port     = var.app_port
+}
 
+# ── EC2 Instances ──────────────────────────────────────────────────────────────
+module "ec2" {
+  source                = "./modules/ec2"
+  project_name          = var.project_name
+  subnet_id             = module.vpc.public_subnet_id
+  jenkins_sg_id         = module.sg.jenkins_sg_id
+  app_sg_id             = module.sg.app_sg_id
+  ec2_key_pair_name     = var.ec2_key_pair_name
+  jenkins_instance_type = var.jenkins_instance_type
+  app_instance_type     = var.app_instance_type
+  app_port              = var.app_port
+}
+
+# ── Route 53 DNS (A record → app EC2 Elastic IP) ──────────────────────────────
+module "route53" {
+  source        = "./modules/route53"
   domain_name   = var.domain_name
   app_subdomain = var.app_subdomain
-  ec2_public_ip = module.ec2.public_ip
+  app_eip       = module.ec2.app_eip
 }
 
 # ── Outputs ────────────────────────────────────────────────────────────────────
-output "ec2_public_ip" {
-  description = "Public IP of the EC2 instance"
-  value       = module.ec2.public_ip
+output "jenkins_public_ip" {
+  value       = module.ec2.jenkins_public_ip
+  description = "SSH / UI access: http://<jenkins_public_ip>:8080"
 }
 
-output "ec2_instance_id" {
-  description = "EC2 instance ID"
-  value       = module.ec2.instance_id
+output "app_public_ip" {
+  value       = module.ec2.app_eip
+  description = "App Elastic IP — also registered in Route 53"
 }
 
 output "app_url" {
-  description = "Public URL of the deployed app"
-  value       = "https://${var.app_subdomain}.${var.domain_name}"
+  value       = "http://${var.app_subdomain}.${var.domain_name}"
+  description = "Public URL of the CAN Tuner dashboard"
 }
 
-output "ssh_command" {
-  description = "SSH command to connect to the EC2 instance"
-  value       = "ssh -i ${var.key_pair_name}.pem ubuntu@${module.ec2.public_ip}"
+output "ssh_jenkins" {
+  value = "ssh -i <your-key>.pem ubuntu@${module.ec2.jenkins_public_ip}"
+}
+
+output "ssh_app" {
+  value = "ssh -i <your-key>.pem ubuntu@${module.ec2.app_eip}"
 }

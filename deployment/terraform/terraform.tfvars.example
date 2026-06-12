@@ -1,0 +1,26 @@
+# Copy to terraform.tfvars and fill in your values.
+# Never commit terraform.tfvars to git.
+
+aws_region        = "us-east-2"
+environment       = "prod"
+project_name      = "can-tuner"
+
+domain_name       = "yourdomain.com"    # must exist as Route 53 Hosted Zone
+app_subdomain     = "tuner"             # → tuner.yourdomain.com
+
+ec2_key_pair_name = "your-key-pair"     # Key Pair name in us-east-2
+
+# t3.small = 2 vCPU / 2 GB — fine for both Jenkins and the Flask app
+jenkins_instance_type = "t3.small"
+app_instance_type     = "t3.small"
+
+app_port = 5000
+
+# Optional: only needed if you add HTTPS via ACM + ALB later
+# certificate_arn = "arn:aws:acm:us-east-2:ACCOUNT_ID:certificate/CERT_ID"
+
+tags = {
+  Project   = "CAN-Tuner"
+  ManagedBy = "Terraform"
+  Owner     = "your-team"
+}

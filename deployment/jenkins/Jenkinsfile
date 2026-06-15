@@ -50,7 +50,6 @@ pipeline {
             when { not { expression { params.SKIP_TESTS } } }
             steps {
                 sh '''
-                    python3 -m pip install --quiet --break-system-packages flake8
                     flake8 app.py can_tuner3.py waveshare_can.py \
                         --max-line-length=120 \
                         --ignore=E501,W503,E402 \

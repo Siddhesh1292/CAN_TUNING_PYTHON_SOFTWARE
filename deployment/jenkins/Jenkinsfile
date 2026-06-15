@@ -9,63 +9,48 @@
 // No ECR, no ECS, no Fargate.  Pure Docker on two EC2s.
 
 pipeline {
-    agent any   // runs on the Jenkins EC2 itself
+    agent any
 
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timeout(time: 20, unit: 'MINUTES')
         disableConcurrentBuilds()
         timestamps()
-        "ansiColor('xterm')"
     }
 
     parameters {
-        booleanParam(
-            name: 'SKIP_TESTS',
-            defaultValue: false,
-            description: 'Skip lint/test stages for emergency deploys'
-        )
-        booleanParam(
-            name: 'DRY_RUN',
-            defaultValue: false,
-            description: 'Build image but do NOT deploy to app server'
-        )
+        booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip lint/test stages')
+        booleanParam(name: 'DRY_RUN', defaultValue: false, description: 'Build image but do NOT deploy')
     }
 
     environment {
-        // ── Credentials (add these in Jenkins → Manage Credentials) ──────────
-        // APP_SSH_KEY     : SSH private key credential  (ID: app-server-ssh-key)
-        // APP_SERVER_IP   : Secret text credential      (ID: app-server-ip)
-        // SLACK_WEBHOOK   : Secret text credential      (ID: slack-webhook)      [optional]
-
-        APP_USER        = "deploy"
-        APP_PORT        = "5000"
-        CONTAINER_NAME  = "can-tuner"
-        IMAGE_NAME      = "can-tuner"
-        GIT_SHORT_SHA   = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-        IMAGE_TAG       = "${IMAGE_NAME}:${GIT_SHORT_SHA}"
-        IMAGE_LATEST    = "${IMAGE_NAME}:latest"
-        TAR_FILE        = "can-tuner-${GIT_SHORT_SHA}.tar"
-        REMOTE_DIR      = "/home/deploy/images"
+        APP_USER       = "deploy"
+        APP_PORT       = "5000"
+        CONTAINER_NAME = "can-tuner"
+        IMAGE_NAME     = "can-tuner"
+        IMAGE_LATEST   = "can-tuner:latest"
     }
 
     stages {
 
-        // ── 1. Checkout ───────────────────────────────────────────────────────
         stage('Checkout') {
             steps {
                 checkout scm
-                echo "Branch: ${env.BRANCH_NAME}  |  Commit: ${env.GIT_SHORT_SHA}"
+                script {
+                    env.GIT_SHORT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG     = "${env.IMAGE_NAME}:${env.GIT_SHORT_SHA}"
+                    env.TAR_FILE      = "can-tuner-${env.GIT_SHORT_SHA}.tar"
+                    env.REMOTE_DIR    = "/home/deploy/images"
+                }
+                echo "Branch: ${env.BRANCH_NAME} | Commit: ${env.GIT_SHORT_SHA}"
             }
         }
 
-        // ── 2. Lint ───────────────────────────────────────────────────────────
         stage('Lint') {
             when { not { expression { params.SKIP_TESTS } } }
             steps {
                 sh '''
                     python3 -m pip install --quiet --break-system-packages flake8
-                    # app.py, can_tuner3.py, waveshare_can.py are the three source files
                     flake8 app.py can_tuner3.py waveshare_can.py \
                         --max-line-length=120 \
                         --ignore=E501,W503,E402 \
@@ -74,7 +59,6 @@ pipeline {
             }
         }
 
-        // ── 3. Test ───────────────────────────────────────────────────────────
         stage('Test') {
             when { not { expression { params.SKIP_TESTS } } }
             steps {
@@ -84,12 +68,7 @@ pipeline {
                         Flask==3.1.3 Werkzeug==3.1.8 Jinja2==3.1.6 \
                         MarkupSafe==3.0.3 itsdangerous==2.2.0 click==8.4.1 \
                         blinker==1.9.0
-                    # Tests stub out pyserial and waveshare_can so no hardware needed
-                    pytest tests/ \
-                        --cov=app \
-                        --cov-report=xml:coverage.xml \
-                        --junitxml=test-results.xml \
-                        -v
+                    python3 -m pytest tests/ -v
                 '''
             }
             post {
@@ -99,74 +78,48 @@ pipeline {
             }
         }
 
-        // ── 4. Build Docker Image ─────────────────────────────────────────────
         stage('Build Image') {
             steps {
                 sh """
                     docker build \\
-                        --file docker/Dockerfile \\
+                        --file deployment/docker/Dockerfile \\
                         --tag ${env.IMAGE_TAG} \\
                         --tag ${env.IMAGE_LATEST} \\
-                        --label "git.commit=${env.GIT_SHORT_SHA}" \\
-                        --label "git.branch=${env.BRANCH_NAME}" \\
-                        --label "build.number=${env.BUILD_NUMBER}" \\
+                        --label git.commit=${env.GIT_SHORT_SHA} \\
                         .
-                    echo "Image built: ${env.IMAGE_TAG}"
-                    docker images ${env.IMAGE_NAME}
+                    echo "Built: ${env.IMAGE_TAG}"
                 """
             }
         }
 
-        // ── 5. Export image as tar ────────────────────────────────────────────
         stage('Export Image') {
             when { not { expression { params.DRY_RUN } } }
             steps {
-                sh """
-                    docker save ${env.IMAGE_LATEST} -o /tmp/${env.TAR_FILE}
-                    ls -lh /tmp/${env.TAR_FILE}
-                """
+                sh "docker save ${env.IMAGE_LATEST} -o /tmp/${env.TAR_FILE}"
             }
         }
 
-        // ── 6. Transfer & Deploy to App EC2 ──────────────────────────────────
         stage('Deploy') {
             when { not { expression { params.DRY_RUN } } }
             steps {
                 withCredentials([
-                    sshUserPrivateKey(
-                        credentialsId: 'app-server-ssh-key',
-                        keyFileVariable: 'SSH_KEY'
-                    ),
-                    string(
-                        credentialsId: 'app-server-ip',
-                        variable: 'APP_IP'
-                    )
+                    sshUserPrivateKey(credentialsId: 'app-server-ssh-key', keyFileVariable: 'SSH_KEY'),
+                    string(credentialsId: 'app-server-ip', variable: 'APP_IP')
                 ]) {
                     sh """
-                        SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=15 -i \$SSH_KEY"
+                        SSH_OPTS="-o StrictHostKeyChecking=no -i \$SSH_KEY"
 
-                        # ── 6a. Ensure remote image directory exists ──────────
-                        ssh \$SSH_OPTS ${env.APP_USER}@\$APP_IP \\
-                            "mkdir -p ${env.REMOTE_DIR}"
+                        ssh \$SSH_OPTS ${env.APP_USER}@\$APP_IP "mkdir -p ${env.REMOTE_DIR}"
 
-                        # ── 6b. Copy image tar to app server ──────────────────
-                        echo "Transferring image to app server..."
                         scp -o StrictHostKeyChecking=no -i \$SSH_KEY \\
                             /tmp/${env.TAR_FILE} \\
                             ${env.APP_USER}@\$APP_IP:${env.REMOTE_DIR}/
 
-                        # ── 6c. Load image + restart container ────────────────
-                        ssh \$SSH_OPTS ${env.APP_USER}@\$APP_IP bash -s <<'REMOTE'
+                        ssh \$SSH_OPTS ${env.APP_USER}@\$APP_IP bash << 'REMOTE'
 set -e
-
-echo "--- Loading Docker image ---"
 docker load -i ${env.REMOTE_DIR}/${env.TAR_FILE}
-
-echo "--- Stopping old container (if running) ---"
 docker stop ${env.CONTAINER_NAME} 2>/dev/null || true
 docker rm   ${env.CONTAINER_NAME} 2>/dev/null || true
-
-echo "--- Starting new container ---"
 docker run -d \\
     --name ${env.CONTAINER_NAME} \\
     --restart unless-stopped \\
@@ -174,22 +127,7 @@ docker run -d \\
     -e FLASK_ENV=production \\
     -e PORT=${env.APP_PORT} \\
     ${env.IMAGE_LATEST}
-
-echo "--- Waiting for container to become healthy ---"
-for i in \$(seq 1 12); do
-    STATUS=\$(docker inspect --format='{{.State.Health.Status}}' ${env.CONTAINER_NAME} 2>/dev/null || echo "starting")
-    echo "  attempt \$i: \$STATUS"
-    if [ "\$STATUS" = "healthy" ]; then
-        echo "Container is healthy."
-        break
-    fi
-    sleep 5
-done
-
-echo "--- Cleanup old tars (keep last 3) ---"
-ls -t ${env.REMOTE_DIR}/*.tar 2>/dev/null | tail -n +4 | xargs rm -f || true
-
-echo "--- Done ---"
+echo "Container started"
 docker ps --filter name=${env.CONTAINER_NAME}
 REMOTE
                     """
@@ -197,58 +135,42 @@ REMOTE
             }
         }
 
-        // ── 7. Health Check ───────────────────────────────────────────────────
         stage('Health Check') {
             when { not { expression { params.DRY_RUN } } }
             steps {
-                withCredentials([
-                    string(credentialsId: 'app-server-ip', variable: 'APP_IP')
-                ]) {
+                withCredentials([string(credentialsId: 'app-server-ip', variable: 'APP_IP')]) {
                     sh """
-                        echo "Probing http://\$APP_IP:${env.APP_PORT}/health ..."
+                        echo "Checking health..."
                         for i in 1 2 3 4 5; do
-                            CODE=\$(curl -sf -o /dev/null -w "%{http_code}" \\
-                                    http://\$APP_IP:${env.APP_PORT}/health || echo "000")
-                            echo "  attempt \$i → HTTP \$CODE"
+                            CODE=\$(curl -sf -o /dev/null -w "%{http_code}" http://\$APP_IP:${env.APP_PORT}/health || echo "000")
+                            echo "Attempt \$i: HTTP \$CODE"
                             if [ "\$CODE" = "200" ]; then
                                 echo "Health check passed!"
                                 exit 0
                             fi
                             sleep 6
                         done
-                        echo "Health check FAILED — investigate CloudWatch / docker logs"
+                        echo "Health check failed"
                         exit 1
                     """
                 }
             }
         }
 
-        // ── 8. Cleanup local tar ──────────────────────────────────────────────
         stage('Cleanup') {
             steps {
                 sh "rm -f /tmp/${env.TAR_FILE} || true"
-                // Remove all but the 3 most recent local images
-                sh """
-                    docker images ${env.IMAGE_NAME} --format '{{.ID}}' \\
-                        | tail -n +4 \\
-                        | xargs -r docker rmi -f || true
-                """
+                sh "docker images ${env.IMAGE_NAME} --format '{{.ID}}' | tail -n +4 | xargs -r docker rmi -f || true"
             }
         }
     }
 
-    // ── Notifications ──────────────────────────────────────────────────────────
     post {
         success {
-            echo "Deployment successful — build #${env.BUILD_NUMBER} (${env.GIT_SHORT_SHA})"
-            // Uncomment if you add the Slack plugin:
-            // slackSend channel: '#deployments', color: 'good',
-            //     message: ":white_check_mark: CAN Tuner deployed — `${env.GIT_SHORT_SHA}` | Build <${env.BUILD_URL}|#${env.BUILD_NUMBER}>"
+            echo "Deployment successful - build #${env.BUILD_NUMBER} (${env.GIT_SHORT_SHA})"
         }
         failure {
-            echo "Deployment FAILED — check build log: ${env.BUILD_URL}"
-            // slackSend channel: '#deployments', color: 'danger',
-            //     message: ":x: CAN Tuner deploy FAILED — `${env.GIT_SHORT_SHA}` | <${env.BUILD_URL}|#${env.BUILD_NUMBER}>"
+            echo "Deployment FAILED - check console output"
         }
         always {
             cleanWs()

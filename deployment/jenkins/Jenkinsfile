@@ -51,9 +51,9 @@ pipeline {
             steps {
                 sh '''
                     flake8 app.py can_tuner3.py waveshare_can.py \
-                        --max-line-length=120 \
-                        --ignore=E501,W503,E402 \
-                        --statistics
+                --max-line-length=120 \
+                --ignore=E501,W503,E402 \
+                --statistics
                 '''
             }
         }

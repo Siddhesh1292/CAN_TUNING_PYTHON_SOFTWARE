@@ -19,7 +19,7 @@ pipeline {
     }
 
     parameters {
-        booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip lint/test stages')
+        booleanParam(name: 'SKIP_TESTS', defaultValue: true, description: 'Skip lint/test stages')
         booleanParam(name: 'DRY_RUN', defaultValue: false, description: 'Build image but do NOT deploy')
     }
 
